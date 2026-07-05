@@ -1,0 +1,11 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+*.pdb
+
+# OMC / agent operational state
+/.omc/
+
+# Local env / editor
+/.env
+.DS_Store

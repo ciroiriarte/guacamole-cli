@@ -1,0 +1,30 @@
+[package]
+name = "gua-rest"
+description = "Apache Guacamole REST management-API client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+gua-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+
+# Test-support: a reusable wiremock-backed mock gateway. Optional so it never
+# ships in a release build; downstream crates enable it as a dev-dependency:
+#   gua-rest = { workspace = true, features = ["test-support"] }
+wiremock = { workspace = true, optional = true }
+
+[features]
+test-support = ["dep:wiremock"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+gua-rest = { path = ".", features = ["test-support"] }
+
+[lints]
+workspace = true

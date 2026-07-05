@@ -3,6 +3,11 @@
 **/*.rs.bk
 *.pdb
 
+# cargo-fuzz artifacts (keep corpus seeds and the target definition)
+/crates/gua-proto/fuzz/target
+/crates/gua-proto/fuzz/artifacts
+/crates/gua-proto/fuzz/Cargo.lock
+
 # OMC / agent operational state
 /.omc/
 

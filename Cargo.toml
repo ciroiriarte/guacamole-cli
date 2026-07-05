@@ -1,0 +1,95 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+license = "Apache-2.0"
+repository = "https://github.com/ciroiriarte/guacamole-cli"
+authors = ["Ciro Iriarte <ciro.iriarte@gmail.com>"]
+
+[workspace.dependencies]
+# --- internal crates ---
+gua-core = { path = "crates/gua-core" }
+gua-proto = { path = "crates/gua-proto" }
+gua-rest = { path = "crates/gua-rest" }
+gua-tunnel = { path = "crates/gua-tunnel" }
+gua-session = { path = "crates/gua-session" }
+gua-tui = { path = "crates/gua-tui" }
+gua-gui = { path = "crates/gua-gui" }
+gua-fuse = { path = "crates/gua-fuse" }
+
+# --- shared external deps (pinned by major) ---
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+directories = "5"
+secrecy = "0.8"
+zeroize = "1"
+comfy-table = "7"
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+url = { version = "2", features = ["serde"] }
+keyring = "3"
+
+# --- dev / test ---
+wiremock = "0.6"
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Allow a couple of noisy pedantic-adjacent lints that fight ergonomic CLI code.
+module_name_repetitions = "allow"
+
+# =====================================================================
+# `gua` binary — the CLI entry point. Lives at the workspace root per the
+# architecture (thin binary; heavy renderers behind cargo features).
+# =====================================================================
+[package]
+name = "gua"
+description = "Native command-line / native client for Apache Guacamole"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+default-run = "gua"
+
+[[bin]]
+name = "gua"
+path = "src/main.rs"
+
+[features]
+# Headless (management-only) build is the default so it stays small and fast.
+# Renderer features pull in their crates; those crates gain heavy deps in
+# their own roadmap issues (TUI: #24+, GUI: #29+, FUSE: #39).
+default = []
+tui = ["dep:gua-tui"]
+gui = ["dep:gua-gui"]
+fuse = ["dep:gua-fuse"]
+full = ["tui", "gui", "fuse"]
+
+[dependencies]
+gua-core.workspace = true
+gua-proto.workspace = true
+gua-rest.workspace = true
+gua-tunnel.workspace = true
+gua-session.workspace = true
+gua-tui = { workspace = true, optional = true }
+gua-gui = { workspace = true, optional = true }
+gua-fuse = { workspace = true, optional = true }
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

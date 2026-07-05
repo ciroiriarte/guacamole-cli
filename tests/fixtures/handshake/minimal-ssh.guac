@@ -1,0 +1,9 @@
+6.select,3.ssh;
+4.args,13.VERSION_1_5_0,8.hostname,4.port,8.username,8.password;
+4.size,4.1024,3.768,2.96;
+5.audio,9.audio/L16;
+5.video;
+5.image,9.image/png,10.image/jpeg;
+8.timezone,16.America/Asuncion;
+7.connect,13.VERSION_1_5_0,20.ssh.example.internal,2.22,5.alice,0.;
+5.ready,37.$260d01d6-7e8a-4d0b-9c1e-1a2b3c4d5e6f;

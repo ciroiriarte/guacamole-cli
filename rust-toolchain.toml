@@ -1,0 +1,6 @@
+# Advisory toolchain pin for contributors using rustup. Plain `cargo` (no
+# rustup) ignores this file; the MSRV is enforced via `rust-version` in
+# Cargo.toml and the CI matrix.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

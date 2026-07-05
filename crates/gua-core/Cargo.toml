@@ -1,0 +1,37 @@
+[package]
+name = "gua-core"
+description = "Shared foundations for guacamole-cli: errors, config, credentials, logging, output"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+directories.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
+zeroize.workspace = true
+comfy-table.workspace = true
+url.workspace = true
+keyring = { workspace = true, optional = true }
+
+[features]
+# OS keyring credential backend is the default secure path. The `0600` file
+# backend is always compiled as a fallback; build with `--no-default-features`
+# to get a keyring-free (file-only) build.
+default = ["keyring-store"]
+keyring-store = ["dep:keyring"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

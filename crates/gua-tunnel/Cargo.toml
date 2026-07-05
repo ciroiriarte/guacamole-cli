@@ -1,0 +1,16 @@
+[package]
+name = "gua-tunnel"
+description = "Guacamole WebSocket/HTTP tunnel transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+gua-core.workspace = true
+gua-proto.workspace = true
+
+[lints]
+workspace = true

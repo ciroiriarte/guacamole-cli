@@ -495,6 +495,10 @@ dependencies = [
  "gua-tui",
  "gua-tunnel",
  "secrecy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 

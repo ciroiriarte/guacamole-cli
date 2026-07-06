@@ -2,6 +2,7 @@
 
 mod cli;
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 use clap::Parser;
@@ -9,8 +10,10 @@ use secrecy::SecretString;
 
 use gua_core::config::{Config, DEFAULT_PROFILE};
 use gua_core::credentials::default_store;
+use gua_core::output::{OutputFormat, Tabular};
 use gua_core::{Error, Result};
-use gua_rest::Client;
+use gua_rest::{Client, Connection, ConnectionDetail};
+use serde::Serialize;
 
 use cli::{Cli, Command, ConfigCmd, ConnectionCmd, LoginArgs, RecordCmd, SessionCmd};
 
@@ -33,8 +36,8 @@ fn run(cli: &Cli) -> Result<()> {
         // The following belong to later roadmap phases. They are wired into the
         // CLI now (issue #8) but not yet implemented.
         Command::Connection(c) => match c {
-            ConnectionCmd::List => unimplemented("connection list", 12),
-            ConnectionCmd::Get { .. } => unimplemented("connection get", 12),
+            ConnectionCmd::List => run_connection_list(cli),
+            ConnectionCmd::Get { id } => run_connection_get(cli, id),
             ConnectionCmd::Create => unimplemented("connection create", 13),
             ConnectionCmd::Update { .. } => unimplemented("connection update", 13),
             ConnectionCmd::Delete { .. } => unimplemented("connection delete", 13),
@@ -60,6 +63,105 @@ fn target_profile(cli: &Cli, cfg: &Config) -> String {
         .unwrap_or_else(|| DEFAULT_PROFILE.to_string())
 }
 
+#[derive(Debug, Serialize)]
+struct ConnectionRow {
+    id: String,
+    name: String,
+    protocol: String,
+    parent: String,
+    active: String,
+}
+
+impl From<Connection> for ConnectionRow {
+    fn from(c: Connection) -> Self {
+        Self {
+            id: c.identifier,
+            name: c.name,
+            protocol: c.protocol,
+            parent: c.parent_identifier.unwrap_or_else(|| "-".to_string()),
+            active: c
+                .active_connections
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+        }
+    }
+}
+
+impl Tabular for ConnectionRow {
+    fn headers() -> Vec<&'static str> {
+        vec!["ID", "NAME", "PROTOCOL", "PARENT", "ACTIVE"]
+    }
+
+    fn row(&self) -> Vec<String> {
+        vec![
+            self.id.clone(),
+            self.name.clone(),
+            self.protocol.clone(),
+            self.parent.clone(),
+            self.active.clone(),
+        ]
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ConnectionDetailRow {
+    id: String,
+    name: String,
+    protocol: String,
+    parent: String,
+    active: String,
+    parameters: BTreeMap<String, String>,
+}
+
+impl From<ConnectionDetail> for ConnectionDetailRow {
+    fn from(d: ConnectionDetail) -> Self {
+        let base = ConnectionRow::from(d.connection);
+        let parameters = d
+            .parameters
+            .into_iter()
+            .map(|(k, v)| {
+                let value = if is_sensitive_parameter(&k) {
+                    "***".to_string()
+                } else {
+                    v
+                };
+                (k, value)
+            })
+            .collect();
+        Self {
+            id: base.id,
+            name: base.name,
+            protocol: base.protocol,
+            parent: base.parent,
+            active: base.active,
+            parameters,
+        }
+    }
+}
+
+impl Tabular for ConnectionDetailRow {
+    fn headers() -> Vec<&'static str> {
+        vec!["ID", "NAME", "PROTOCOL", "PARENT", "ACTIVE", "PARAMETERS"]
+    }
+
+    fn row(&self) -> Vec<String> {
+        let parameters = self
+            .parameters
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        vec![
+            self.id.clone(),
+            self.name.clone(),
+            self.protocol.clone(),
+            self.parent.clone(),
+            self.active.clone(),
+            parameters,
+        ]
+    }
+}
+
 fn active_profile(cli: &Cli, cfg: &Config) -> String {
     cfg.active_profile_name(cli.profile.as_deref())
 }
@@ -75,6 +177,61 @@ fn rest_client(cli: &Cli, cfg: &Config) -> Result<Client> {
     Client::builder(&server)?
         .tls_insecure(profile.tls_insecure)
         .build()
+}
+
+fn output_format(cli: &Cli, cfg: &Config) -> Result<OutputFormat> {
+    if let Some(output) = cli.output {
+        return Ok(output.into());
+    }
+    Ok(cfg.effective_profile(cli.profile.as_deref())?.output)
+}
+
+fn data_source(cli: &Cli, cfg: &Config) -> Result<String> {
+    cfg.effective_profile(cli.profile.as_deref())?
+        .data_source
+        .ok_or_else(|| {
+            Error::Config(
+                "data_source is not configured (run `gua login` or `gua config set data_source <name>`)"
+                    .into(),
+            )
+        })
+}
+
+fn stored_token(cli: &Cli, cfg: &Config) -> Result<gua_core::credentials::Token> {
+    let profile_name = active_profile(cli, cfg);
+    let store = default_store()?;
+    store.load_token(&profile_name)?.ok_or_else(|| {
+        Error::Auth(format!(
+            "no stored token for profile {profile_name}; run `gua login` first"
+        ))
+    })
+}
+
+fn run_connection_list(cli: &Cli) -> Result<()> {
+    let cfg = Config::load()?;
+    let client = rest_client(cli, &cfg)?;
+    let data_source = data_source(cli, &cfg)?;
+    let token = stored_token(cli, &cfg)?;
+    let rows = client
+        .list_connections(&data_source, &token)?
+        .into_iter()
+        .map(ConnectionRow::from)
+        .collect::<Vec<_>>();
+    gua_core::output::print(&rows, output_format(cli, &cfg)?)
+}
+
+fn run_connection_get(cli: &Cli, id: &str) -> Result<()> {
+    let cfg = Config::load()?;
+    let client = rest_client(cli, &cfg)?;
+    let data_source = data_source(cli, &cfg)?;
+    let token = stored_token(cli, &cfg)?;
+    let row = ConnectionDetailRow::from(client.get_connection(&data_source, id, &token)?);
+    gua_core::output::print(&[row], output_format(cli, &cfg)?)
+}
+
+fn is_sensitive_parameter(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("password") || lower.contains("passphrase") || lower.contains("private-key")
 }
 
 fn run_login(cli: &Cli, args: &LoginArgs) -> Result<()> {

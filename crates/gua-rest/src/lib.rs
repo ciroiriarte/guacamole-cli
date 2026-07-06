@@ -9,6 +9,8 @@
 use gua_core::credentials::{CredentialStore, Token};
 use gua_core::{Error, Result};
 use secrecy::{ExposeSecret, SecretString};
+use std::collections::BTreeMap;
+
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use url::Url;
 
@@ -28,6 +30,41 @@ pub struct AuthResponse {
     /// Data sources available to the user.
     #[serde(default)]
     pub available_data_sources: Vec<String>,
+}
+
+/// A Guacamole connection summary/detail object.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    /// Connection identifier.
+    #[serde(default)]
+    pub identifier: String,
+    /// Display name.
+    #[serde(default)]
+    pub name: String,
+    /// Parent connection-group identifier.
+    #[serde(default)]
+    pub parent_identifier: Option<String>,
+    /// Protocol name, e.g. `ssh`, `rdp`, `vnc`.
+    #[serde(default)]
+    pub protocol: String,
+    /// Number of active connections if returned by the gateway.
+    #[serde(default)]
+    pub active_connections: Option<u64>,
+    /// Arbitrary Guacamole attributes.
+    #[serde(default)]
+    pub attributes: BTreeMap<String, serde_json::Value>,
+}
+
+/// A connection plus its parameter map from `/parameters`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionDetail {
+    /// Connection metadata.
+    #[serde(flatten)]
+    pub connection: Connection,
+    /// Connection parameters.
+    #[serde(default)]
+    pub parameters: BTreeMap<String, String>,
 }
 
 /// Blocking Guacamole REST client.
@@ -78,6 +115,41 @@ impl Client {
             .send()
             .map_err(|e| Error::Http(format!("DELETE /api/tokens/<token>: {e}")))?;
         expect_empty_success(resp, "DELETE /api/tokens/<token>")
+    }
+
+    /// List connections in `data_source`.
+    pub fn list_connections(&self, data_source: &str, token: &Token) -> Result<Vec<Connection>> {
+        let path = ["api", "session", "data", data_source, "connections"];
+        let value: serde_json::Value = self.get_json(&path, token)?;
+        parse_connections(value)
+    }
+
+    /// Fetch one connection and its parameters.
+    pub fn get_connection(
+        &self,
+        data_source: &str,
+        id: &str,
+        token: &Token,
+    ) -> Result<ConnectionDetail> {
+        let connection_path = ["api", "session", "data", data_source, "connections", id];
+        let parameters_path = [
+            "api",
+            "session",
+            "data",
+            data_source,
+            "connections",
+            id,
+            "parameters",
+        ];
+        let mut connection: Connection = self.get_json(&connection_path, token)?;
+        if connection.identifier.is_empty() {
+            connection.identifier = id.to_string();
+        }
+        let parameters = self.get_json(&parameters_path, token)?;
+        Ok(ConnectionDetail {
+            connection,
+            parameters,
+        })
     }
 
     /// Perform an authenticated JSON GET, sending the Guacamole token in the
@@ -157,6 +229,38 @@ pub fn logout_stored(client: &Client, store: &dyn CredentialStore, profile: &str
     let logout_result = client.logout(&token);
     store.delete_token(profile)?;
     logout_result.map(|()| true)
+}
+
+fn parse_connections(value: serde_json::Value) -> Result<Vec<Connection>> {
+    match value {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .map(|v| {
+                serde_json::from_value(v)
+                    .map_err(|e| Error::Http(format!("decoding connections response: {e}")))
+            })
+            .collect(),
+        serde_json::Value::Object(map) => {
+            let mut out = Vec::with_capacity(map.len());
+            for (id, value) in map {
+                let mut connection: Connection = serde_json::from_value(value)
+                    .map_err(|e| Error::Http(format!("decoding connection {id:?}: {e}")))?;
+                if connection.identifier.is_empty() {
+                    connection.identifier = id;
+                }
+                out.push(connection);
+            }
+            out.sort_by(|a, b| {
+                a.name
+                    .cmp(&b.name)
+                    .then_with(|| a.identifier.cmp(&b.identifier))
+            });
+            Ok(out)
+        }
+        other => Err(Error::Http(format!(
+            "decoding connections response: expected object or array, got {other}"
+        ))),
+    }
 }
 
 fn normalize_base_url(base_url: &str) -> Result<Url> {

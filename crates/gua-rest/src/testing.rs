@@ -94,6 +94,41 @@ impl MockGateway {
             .await;
     }
 
+    /// Stub `GET /api/session/data/{dataSource}/connections`.
+    pub async fn stub_connections(&self, data_source: &str, body: serde_json::Value) {
+        let p = format!("/api/session/data/{data_source}/connections");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Stub `GET /api/session/data/{dataSource}/connections/{id}`.
+    pub async fn stub_connection(&self, data_source: &str, id: &str, body: serde_json::Value) {
+        let p = format!("/api/session/data/{data_source}/connections/{id}");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Stub `GET /api/session/data/{dataSource}/connections/{id}/parameters`.
+    pub async fn stub_connection_parameters(
+        &self,
+        data_source: &str,
+        id: &str,
+        body: serde_json::Value,
+    ) {
+        let p = format!("/api/session/data/{data_source}/connections/{id}/parameters");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
     /// Stub an arbitrary management GET under
     /// `/api/session/data/{dataSource}/{resource}` returning `body`.
     pub async fn stub_data_get(&self, data_source: &str, resource: &str, body: serde_json::Value) {

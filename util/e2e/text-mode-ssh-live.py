@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 
 try:
@@ -95,6 +96,24 @@ def parse_args() -> argparse.Namespace:
         help="PTY transcript path (default: %(default)s or GUA_E2E_LOG).",
     )
     parser.add_argument(
+        "--resize-rows",
+        type=int,
+        default=int(env_default("GUA_E2E_RESIZE_ROWS", "33")),
+        help="PTY rows to apply for resize propagation check (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--resize-cols",
+        type=int,
+        default=int(env_default("GUA_E2E_RESIZE_COLS", "111")),
+        help="PTY columns to apply for resize propagation check (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--skip-resize",
+        action="store_true",
+        default=env_default("GUA_E2E_SKIP_RESIZE", "").lower() in {"1", "true", "yes"},
+        help="Skip dynamic PTY resize propagation assertion.",
+    )
+    parser.add_argument(
         "--keep-state",
         action="store_true",
         help="Keep temporary gua config/token directory for debugging.",
@@ -141,6 +160,15 @@ def expect_prompt(child: "pexpect.spawn", prompt: str, timeout: int) -> None:
     child.expect(prompt, timeout=timeout)
 
 
+def remote_stty_size(child: "pexpect.spawn", prompt: str, timeout: int) -> tuple[int, int]:
+    child.sendline("stty size")
+    child.expect(r"([0-9]+) ([0-9]+)", timeout=timeout)
+    rows = int(child.match.group(1))
+    cols = int(child.match.group(2))
+    expect_prompt(child, prompt, timeout)
+    return rows, cols
+
+
 def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
     log_path = pathlib.Path(args.log)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,6 +187,19 @@ def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
         try:
             expect_prompt(child, args.prompt, args.timeout)
             checks.append("prompt")
+
+            if not args.skip_resize:
+                initial_size = remote_stty_size(child, args.prompt, args.timeout)
+                child.setwinsize(args.resize_rows, args.resize_cols)
+                # Give the CLI loop time to observe SIGWINCH / terminal_size()
+                # and forward a Guacamole `size` instruction to guacd/SSH.
+                time.sleep(1.0)
+                resized_size = remote_stty_size(child, args.prompt, args.timeout)
+                if resized_size == initial_size:
+                    raise AssertionError(
+                        f"remote PTY size did not change after local resize: {initial_size}"
+                    )
+                checks.append(f"resize_propagated_{initial_size[0]}x{initial_size[1]}_to_{resized_size[0]}x{resized_size[1]}")
 
             marker = "GUAC_CLI_PHASE2_STDOUT_OK"
             child.sendline(f"printf {marker}")

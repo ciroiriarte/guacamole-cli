@@ -99,6 +99,14 @@ impl Session {
         Ok(())
     }
 
+    /// Send a terminal/display size update through the Guacamole protocol.
+    pub fn send_size(&mut self, width: u16, height: u16, dpi: u16) -> Result<()> {
+        self.tunnel.send(&Instruction::new(
+            "size",
+            [width.to_string(), height.to_string(), dpi.to_string()],
+        ))
+    }
+
     fn send_key_state(&mut self, keysym: u32, pressed: bool) -> Result<()> {
         self.tunnel.send(&Instruction::new(
             "key",

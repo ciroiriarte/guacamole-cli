@@ -8,6 +8,11 @@
 #![forbid(unsafe_code)]
 
 use std::io::{self, Write};
+use std::panic;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::Duration;
 
 use crossterm::event::{
@@ -15,11 +20,15 @@ use crossterm::event::{
     KeyEventState, KeyModifiers,
 };
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, size as terminal_size};
 use gua_core::{Error, Result};
 use gua_session::{Session, SessionEvent};
+use signal_hook::{consts::SIGINT, flag, SigId};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const GUAC_DPI: u16 = 96;
+const CELL_WIDTH_PX: u16 = 9;
+const CELL_HEIGHT_PX: u16 = 14;
 const XK_SHIFT_L: u32 = 0xFFE1;
 const XK_CONTROL_L: u32 = 0xFFE3;
 const XK_META_L: u32 = 0xFFE7;
@@ -29,10 +38,20 @@ const XK_HYPER_L: u32 = 0xFFED;
 
 /// Run the minimal text-mode console loop.
 pub fn run_text_session(session: &mut Session) -> Result<()> {
-    let _raw = RawModeGuard::enter()?;
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let _raw = RawModeGuard::enter(Arc::clone(&interrupted))?;
     let mut stdout = io::stdout();
 
+    let mut last_terminal_size = None;
+    maybe_send_terminal_size(session, &mut last_terminal_size)?;
+
     loop {
+        if interrupted.load(Ordering::Relaxed) {
+            break;
+        }
+
+        maybe_send_terminal_size(session, &mut last_terminal_size)?;
+
         if event::poll(POLL_INTERVAL).map_err(|e| Error::Io(io::Error::other(e)))? {
             match event::read().map_err(|e| Error::Io(io::Error::other(e)))? {
                 Event::Key(key) => match key_to_action(key) {
@@ -46,6 +65,10 @@ pub fn run_text_session(session: &mut Session) -> Result<()> {
                     for keysym in paste_to_keysyms(&text) {
                         session.send_key(keysym)?;
                     }
+                }
+                Event::Resize(cols, rows) => {
+                    send_terminal_size(session, cols, rows)?;
+                    last_terminal_size = Some((cols, rows));
                 }
                 _ => {}
             }
@@ -64,6 +87,35 @@ pub fn run_text_session(session: &mut Session) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn maybe_send_terminal_size(
+    session: &mut Session,
+    last_terminal_size: &mut Option<(u16, u16)>,
+) -> Result<()> {
+    let Ok((cols, rows)) = terminal_size() else {
+        return Ok(());
+    };
+
+    if *last_terminal_size == Some((cols, rows)) {
+        return Ok(());
+    }
+
+    send_terminal_size(session, cols, rows)?;
+    *last_terminal_size = Some((cols, rows));
+    Ok(())
+}
+
+fn send_terminal_size(session: &mut Session, cols: u16, rows: u16) -> Result<()> {
+    let (width, height) = terminal_cells_to_pixels(cols, rows);
+    session.send_size(width, height, GUAC_DPI)
+}
+
+fn terminal_cells_to_pixels(cols: u16, rows: u16) -> (u16, u16) {
+    (
+        cols.saturating_mul(CELL_WIDTH_PX),
+        rows.saturating_mul(CELL_HEIGHT_PX),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,21 +280,53 @@ fn paste_to_keysyms(text: &str) -> Vec<u32> {
     text.chars().map(|c| c as u32).collect()
 }
 
-struct RawModeGuard;
+type PanicHook = Box<dyn Fn(&panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+struct RawModeGuard {
+    previous_panic_hook: Arc<Mutex<Option<PanicHook>>>,
+    sigint_handler: SigId,
+}
 
 impl RawModeGuard {
-    fn enter() -> Result<Self> {
+    fn enter(interrupted: Arc<AtomicBool>) -> Result<Self> {
         enable_raw_mode().map_err(|e| Error::Io(io::Error::other(e)))?;
         execute!(io::stdout(), EnableBracketedPaste).map_err(Error::Io)?;
-        Ok(Self)
+        let sigint_handler =
+            flag::register(SIGINT, interrupted).map_err(|e| Error::Io(io::Error::other(e)))?;
+
+        let previous_panic_hook = Arc::new(Mutex::new(Some(panic::take_hook())));
+        let hook_previous = Arc::clone(&previous_panic_hook);
+        panic::set_hook(Box::new(move |info| {
+            restore_terminal_modes();
+            if let Ok(previous) = hook_previous.lock() {
+                if let Some(previous) = previous.as_ref() {
+                    previous(info);
+                }
+            }
+        }));
+
+        Ok(Self {
+            previous_panic_hook,
+            sigint_handler,
+        })
     }
 }
 
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableBracketedPaste);
-        let _ = disable_raw_mode();
+        restore_terminal_modes();
+        signal_hook::low_level::unregister(self.sigint_handler);
+        if let Ok(mut previous) = self.previous_panic_hook.lock() {
+            if let Some(previous) = previous.take() {
+                panic::set_hook(previous);
+            }
+        }
     }
+}
+
+fn restore_terminal_modes() {
+    let _ = execute!(io::stdout(), DisableBracketedPaste);
+    let _ = disable_raw_mode();
 }
 
 #[cfg(test)]
@@ -361,6 +445,15 @@ mod tests {
                 KeyEventKind::Release,
             )),
             InputAction::Ignore
+        );
+    }
+
+    #[test]
+    fn converts_terminal_cells_to_guacamole_pixels() {
+        assert_eq!(terminal_cells_to_pixels(80, 24), (720, 336));
+        assert_eq!(
+            terminal_cells_to_pixels(u16::MAX, u16::MAX),
+            (u16::MAX, u16::MAX)
         );
     }
 

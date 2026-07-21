@@ -20,7 +20,9 @@ It validates:
 - Ctrl-A reaches readline;
 - Ctrl-C interrupts a foreground process;
 - multiline stdin reaches `cat` and Ctrl-D exits it;
-- Ctrl-] exits the local `gua connect` loop.
+- bracketed paste reaches the TUI paste-event path;
+- Ctrl-] exits the local `gua connect` loop;
+- SIGINT/SIGTERM process-interrupt probes exit cleanly through terminal cleanup.
 
 Example against the current cli-enabler test VM:
 
@@ -40,6 +42,19 @@ Useful overrides:
 - `GUA_E2E_EXPECTED_PWD` / `--expected-pwd`: expected `pwd` output.
 - `GUA_E2E_LOG` / `--log`: transcript path.
 - `GUA_E2E_TIMEOUT` / `--timeout`: pexpect timeout.
+- `GUA_E2E_RESIZE_ROWS` / `--resize-rows` and `GUA_E2E_RESIZE_COLS` / `--resize-cols`: local PTY size used for resize propagation checks.
+- `GUA_E2E_SKIP_RESIZE` / `--skip-resize`: skip resize assertions.
+- `GUA_E2E_SKIP_SIGNAL_PROBES` / `--skip-signal-probes`: skip the extra SIGINT/SIGTERM clean-exit probes.
+
+For security, provide the Guacamole password with `GUA_E2E_PASSWORD`; avoid CLI
+password arguments because they can be visible in process listings. The harness
+also passes the password to `gua login` via `GUA_PASSWORD`, not `--password`.
+
+Text resize notes: `gua-tui` prefers the terminal's reported pixel dimensions
+when available. Many Unix PTYs report zero pixels, so it falls back to cell
+geometry. Override fallback geometry with `GUA_TUI_CELL_WIDTH_PX`,
+`GUA_TUI_CELL_HEIGHT_PX`, and `GUA_TUI_DPI` to match the server-side guacd
+terminal font metrics when exact remote `stty size` fidelity matters.
 
 The script uses a temporary `GUA_CONFIG` and `GUA_TOKEN_STORE_DIR`, so it does
 not mutate the operator's normal guacamole-cli profile/token state.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import signal
 import shutil
 import subprocess
 import sys
@@ -64,9 +65,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--password",
-        default=env_default("GUA_E2E_PASSWORD"),
-        required=env_default("GUA_E2E_PASSWORD") is None,
-        help="Guacamole password (or GUA_E2E_PASSWORD).",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--connection-id",
@@ -114,6 +114,13 @@ def parse_args() -> argparse.Namespace:
         help="Skip dynamic PTY resize propagation assertion.",
     )
     parser.add_argument(
+        "--skip-signal-probes",
+        action="store_true",
+        default=env_default("GUA_E2E_SKIP_SIGNAL_PROBES", "").lower()
+        in {"1", "true", "yes"},
+        help="Skip SIGINT/SIGTERM process-interrupt probes.",
+    )
+    parser.add_argument(
         "--keep-state",
         action="store_true",
         help="Keep temporary gua config/token directory for debugging.",
@@ -121,11 +128,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def redact_cmd(cmd: list[str]) -> str:
+    redacted: list[str] = []
+    hide_next = False
+    for arg in cmd:
+        if hide_next:
+            redacted.append("<redacted>")
+            hide_next = False
+            continue
+        redacted.append(arg)
+        if arg in {"--password", "-p"}:
+            hide_next = True
+    return " ".join(redacted)
+
+
 def run_checked(cmd: list[str], env: dict[str, str]) -> None:
     completed = subprocess.run(cmd, env=env, text=True, capture_output=True)
     if completed.returncode != 0:
         raise RuntimeError(
-            f"command failed ({completed.returncode}): {' '.join(cmd)}\n"
+            f"command failed ({completed.returncode}): {redact_cmd(cmd)}\n"
             f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
 
@@ -149,8 +170,6 @@ def login(gua: str, server: str, username: str, password: str, env: dict[str, st
             "login",
             "--username",
             username,
-            "--password",
-            password,
         ],
         login_env,
     )
@@ -167,6 +186,27 @@ def remote_stty_size(child: "pexpect.spawn", prompt: str, timeout: int) -> tuple
     cols = int(child.match.group(2))
     expect_prompt(child, prompt, timeout)
     return rows, cols
+
+
+def probe_signal_exit(
+    args: argparse.Namespace, env: dict[str, str], signum: signal.Signals
+) -> str:
+    cmd = f"{args.gua} --server {args.server} connect {args.connection_id}"
+    child = pexpect.spawn(
+        cmd,
+        encoding="utf-8",
+        timeout=args.timeout,
+        dimensions=(24, 100),
+        env=env,
+    )
+    try:
+        expect_prompt(child, args.prompt, args.timeout)
+        os.kill(child.pid, signum)
+        child.expect(pexpect.EOF, timeout=args.timeout)
+        return signum.name.lower() + "_exit"
+    finally:
+        if child.isalive():
+            child.close(force=True)
 
 
 def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
@@ -199,7 +239,10 @@ def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
                     raise AssertionError(
                         f"remote PTY size did not change after local resize: {initial_size}"
                     )
-                checks.append(f"resize_propagated_{initial_size[0]}x{initial_size[1]}_to_{resized_size[0]}x{resized_size[1]}")
+                checks.append(
+                    f"resize_propagated_{initial_size[0]}x{initial_size[1]}_to_"
+                    f"{resized_size[0]}x{resized_size[1]}"
+                )
 
             marker = "GUAC_CLI_PHASE2_STDOUT_OK"
             child.sendline(f"printf {marker}")
@@ -247,6 +290,15 @@ def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
             expect_prompt(child, args.prompt, args.timeout)
             checks.append("stdin_multiline_and_ctrl_d")
 
+            child.sendline("cat >/tmp/gua_phase2_bracketed_paste")
+            child.send("\x1b[200~BRACKETED_PASTE_ONE\nBRACKETED_PASTE_TWO\n\x1b[201~")
+            child.sendcontrol("d")
+            expect_prompt(child, args.prompt, args.timeout)
+            child.sendline("grep -qx BRACKETED_PASTE_TWO /tmp/gua_phase2_bracketed_paste && echo BRACKETED_PASTE_OK")
+            child.expect("BRACKETED_PASTE_OK", timeout=args.timeout)
+            expect_prompt(child, args.prompt, args.timeout)
+            checks.append("bracketed_paste_event")
+
             child.sendcontrol("]")
             child.expect(pexpect.EOF, timeout=args.timeout)
             checks.append("local_escape_exit")
@@ -261,6 +313,18 @@ def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
 
 def main() -> int:
     args = parse_args()
+    password = env_default("GUA_E2E_PASSWORD")
+    if args.password:
+        print(
+            "warning: --password is insecure and deprecated for this live e2e harness; "
+            "use GUA_E2E_PASSWORD instead",
+            file=sys.stderr,
+        )
+        password = args.password
+    if password is None:
+        print("GUA_E2E_PASSWORD is required", file=sys.stderr)
+        return 2
+
     gua_path = shutil.which(args.gua) if os.path.sep not in args.gua else args.gua
     if not gua_path or not pathlib.Path(gua_path).exists():
         print(f"gua binary not found: {args.gua}", file=sys.stderr)
@@ -274,8 +338,11 @@ def main() -> int:
             "GUA_TOKEN_STORE_DIR": str(tmp_path / "tokens"),
         }
         try:
-            login(args.gua, args.server, args.username, args.password, env)
+            login(args.gua, args.server, args.username, password, env)
             result = run_session(args, env)
+            if not args.skip_signal_probes:
+                for signum in (signal.SIGINT, signal.SIGTERM):
+                    result.checks.append(probe_signal_exit(args, env, signum))
         except Exception as exc:  # noqa: BLE001 - CLI test runner should print transcript context
             print(f"PHASE2_E2E_FAIL {type(exc).__name__}: {exc}", file=sys.stderr)
             print("--- transcript tail ---", file=sys.stderr)

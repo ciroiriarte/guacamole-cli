@@ -74,9 +74,17 @@ the authenticated guacamole-client WebSocket tunnel, consumes the owner-scoped `
 (`application/octet-stream`), acknowledges each received `blob`, and writes decoded raw PTY bytes to
 the local terminal. Press `Ctrl-]` to exit the local client loop.
 
-This is intentionally a first-pass raw passthrough. Full resize handling, richer key/modifier/paste
-fidelity, clipboard integration, fallback UX, and live patched-guacd e2e coverage are tracked as
-follow-up issues.
+Text input is sent as Guacamole `key` instructions. The client maps printable Unicode, control
+keys, navigation keys, F1-F35, keypad variants, plain Ctrl+printable C0/DEL controls, and
+modifier-wrapped combinations (Shift/Ctrl/Alt/Meta/Super/Hyper) to X11 keysyms. Paste events are
+forwarded as literal character key events; the
+client enables local bracketed-paste capture, but deliberately does not inject bracketed-paste
+delimiters because guacamole-cli cannot yet know whether the remote application enabled bracketed
+paste mode. Press `Ctrl-]` to exit the local client loop (`Ctrl-5` is accepted as the same PTY
+escape on terminals that report Ctrl-] that way).
+
+This is still a raw passthrough. Full resize handling, clipboard stream integration, fallback UX,
+and broader live e2e coverage are tracked as follow-up issues.
 
 ## License
 

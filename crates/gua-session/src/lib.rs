@@ -83,13 +83,29 @@ impl Session {
     /// Send one Unicode/control key press and release through the Guacamole
     /// keyboard protocol.
     pub fn send_key(&mut self, keysym: u32) -> Result<()> {
+        self.send_key_state(keysym, true)?;
+        self.send_key_state(keysym, false)
+    }
+
+    /// Send one key with synthetic modifier press/release events.
+    pub fn send_key_combo(&mut self, modifiers: &[u32], keysym: u32) -> Result<()> {
+        for modifier in modifiers {
+            self.send_key_state(*modifier, true)?;
+        }
+        self.send_key(keysym)?;
+        for modifier in modifiers.iter().rev() {
+            self.send_key_state(*modifier, false)?;
+        }
+        Ok(())
+    }
+
+    fn send_key_state(&mut self, keysym: u32, pressed: bool) -> Result<()> {
         self.tunnel.send(&Instruction::new(
             "key",
-            [keysym.to_string(), "1".to_string()],
-        ))?;
-        self.tunnel.send(&Instruction::new(
-            "key",
-            [keysym.to_string(), "0".to_string()],
+            [
+                keysym.to_string(),
+                if pressed { "1" } else { "0" }.to_string(),
+            ],
         ))
     }
 

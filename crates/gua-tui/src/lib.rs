@@ -15,16 +15,19 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use crossterm::cursor::{MoveTo, RestorePosition, SavePosition};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyEventState, KeyModifiers,
 };
-use crossterm::execute;
+use crossterm::style::{Attribute, Print, SetAttribute};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, size as terminal_size, window_size, WindowSize,
+    disable_raw_mode, enable_raw_mode, size as terminal_size, window_size, Clear, ClearType,
+    WindowSize,
 };
+use crossterm::{execute, queue};
 use gua_core::{Error, Result};
-use gua_session::{Session, SessionEvent};
+use gua_session::{IpmiControlEvent, Session, SessionEvent};
 use signal_hook::{
     consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM},
     flag, SigId,
@@ -54,6 +57,9 @@ pub struct TextSessionOptions {
     /// is available, this makes Ctrl-] pass through to the remote server-rendered
     /// fallback menu; Ctrl-5 remains the local escape.
     pub ipmi_control: bool,
+    /// Reserve and render a local status line plus disconnect banner. Raw mode
+    /// keeps the legacy byte-for-byte passthrough surface.
+    pub chrome: bool,
 }
 
 /// Run the minimal text-mode console loop.
@@ -70,16 +76,23 @@ pub fn run_text_session_with_options(
     let _raw = RawModeGuard::enter(Arc::clone(&interrupted))?;
     let mut stdout = io::stdout();
     let geometry = TerminalGeometry::from_env();
+    let mut chrome = options.chrome.then(ChromeState::default);
 
     let mut last_terminal_size = None;
-    maybe_send_terminal_size(session, &geometry, &mut last_terminal_size)?;
+    maybe_send_terminal_size(session, &geometry, options, &mut last_terminal_size)?;
+    if let Some(chrome) = chrome.as_mut() {
+        if let Ok((cols, rows)) = terminal_size() {
+            chrome.update_size(cols, rows);
+            chrome.render()?;
+        }
+    }
 
     loop {
         if interrupted.load(Ordering::Relaxed) {
             break;
         }
 
-        maybe_send_terminal_size(session, &geometry, &mut last_terminal_size)?;
+        maybe_send_terminal_size(session, &geometry, options, &mut last_terminal_size)?;
 
         match poll_input(POLL_INTERVAL) {
             Ok(true) => match read_input_event() {
@@ -91,11 +104,15 @@ pub fn run_text_session_with_options(
                     }
                 },
                 Ok(Some(Event::Paste(text))) => {
-                    send_paste(session, &text, &mut stdout)?;
+                    send_paste(session, &text, &mut stdout, chrome.as_mut())?;
                 }
                 Ok(Some(Event::Resize(cols, rows))) => {
-                    send_terminal_size(session, &geometry, cols, rows)?;
+                    send_terminal_size(session, &geometry, options, cols, rows)?;
                     last_terminal_size = Some((cols, rows));
+                    if let Some(chrome) = chrome.as_mut() {
+                        chrome.update_size(cols, rows);
+                        chrome.render()?;
+                    }
                 }
                 Ok(Some(_)) | Ok(None) => {}
                 Err(e) => return Err(e),
@@ -104,9 +121,15 @@ pub fn run_text_session_with_options(
             Err(e) => return Err(e),
         }
 
-        if !drain_session_event(session, &mut stdout, POLL_INTERVAL)? {
+        if !drain_session_event(session, &mut stdout, chrome.as_mut(), POLL_INTERVAL)? {
             break;
         }
+    }
+
+    if let Some(chrome) = chrome.as_mut() {
+        chrome.disconnected = true;
+        chrome.render()?;
+        chrome.banner()?;
     }
 
     Ok(())
@@ -131,40 +154,194 @@ fn read_input_event() -> Result<Option<Event>> {
 fn drain_session_event(
     session: &mut Session,
     stdout: &mut impl Write,
+    chrome: Option<&mut ChromeState>,
     timeout: Duration,
 ) -> Result<bool> {
     let Some(event) = session.next_event_timeout(timeout)? else {
         return Ok(true);
     };
-    handle_session_event(stdout, event)
+    handle_session_event(stdout, chrome, event)
 }
 
-fn handle_session_event(stdout: &mut impl Write, event: SessionEvent) -> Result<bool> {
+fn handle_session_event(
+    stdout: &mut impl Write,
+    chrome: Option<&mut ChromeState>,
+    event: SessionEvent,
+) -> Result<bool> {
+    let mut chrome = chrome;
     match event {
         SessionEvent::StdoutBytes(bytes) => {
+            if let Some(chrome) = chrome.as_deref_mut() {
+                chrome.stdout_bytes += bytes.len() as u64;
+            }
             stdout.write_all(&bytes)?;
             stdout.flush()?;
+            if let Some(chrome) = chrome {
+                chrome.render()?;
+            }
             Ok(true)
         }
         SessionEvent::StdoutEnded | SessionEvent::Disconnected => Ok(false),
-        SessionEvent::IpmiControlOpened { .. }
-        | SessionEvent::IpmiControl(_)
-        | SessionEvent::IpmiControlEnded
-        | SessionEvent::StdoutOpened { .. }
-        | SessionEvent::Ignored(_) => Ok(true),
+        SessionEvent::IpmiControlOpened { .. } => {
+            if let Some(chrome) = chrome {
+                chrome.ipmi_control = true;
+                chrome.render()?;
+            }
+            Ok(true)
+        }
+        SessionEvent::IpmiControl(event) => {
+            if let Some(chrome) = chrome {
+                chrome.update_ipmi(event);
+                chrome.render()?;
+            }
+            Ok(true)
+        }
+        SessionEvent::IpmiControlEnded => {
+            if let Some(chrome) = chrome {
+                chrome.ipmi_control = false;
+                chrome.render()?;
+            }
+            Ok(true)
+        }
+        SessionEvent::StdoutOpened { .. } | SessionEvent::Ignored(_) => Ok(true),
     }
 }
 
-fn send_paste(session: &mut Session, text: &str, stdout: &mut impl Write) -> Result<()> {
+fn send_paste(
+    session: &mut Session,
+    text: &str,
+    stdout: &mut impl Write,
+    mut chrome: Option<&mut ChromeState>,
+) -> Result<()> {
     for (idx, keysym) in text.chars().map(paste_char_to_keysym).enumerate() {
         session.send_key(keysym)?;
         if (idx + 1) % PASTE_DRAIN_CHARS == 0
-            && !drain_session_event(session, stdout, DRAIN_INTERVAL)?
+            && !drain_session_event(session, stdout, chrome.as_deref_mut(), DRAIN_INTERVAL)?
         {
             break;
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ChromeState {
+    cols: u16,
+    rows: u16,
+    stdout_bytes: u64,
+    ipmi_control: bool,
+    ipmi_power: Option<String>,
+    ipmi_identify: Option<bool>,
+    ipmi_health: Option<String>,
+    ipmi_last_sel: Option<String>,
+    disconnected: bool,
+}
+
+impl ChromeState {
+    fn update_size(&mut self, cols: u16, rows: u16) {
+        self.cols = cols;
+        self.rows = rows;
+    }
+
+    fn update_ipmi(&mut self, event: IpmiControlEvent) {
+        match event {
+            IpmiControlEvent::State(state) => {
+                self.ipmi_power = Some(state.power);
+                self.ipmi_identify = state.identify;
+                self.ipmi_health = state.health;
+                self.ipmi_last_sel = state.last_sel;
+            }
+            IpmiControlEvent::Result(result) => {
+                self.ipmi_health = Some(if result.ok {
+                    result.message.unwrap_or_else(|| "command ok".to_string())
+                } else {
+                    result
+                        .message
+                        .unwrap_or_else(|| "command failed".to_string())
+                });
+            }
+            IpmiControlEvent::Sel(sel) => {
+                self.ipmi_last_sel = Some(format!("SEL entries: {}", sel.total));
+            }
+            IpmiControlEvent::Unknown(_) => {}
+        }
+    }
+
+    fn status_text(&self) -> String {
+        let mut parts = vec![
+            if self.disconnected {
+                "DISCONNECTED"
+            } else {
+                "connected"
+            }
+            .to_string(),
+            format!("out={}B", self.stdout_bytes),
+            "exit=Ctrl-]".to_string(),
+        ];
+        if self.ipmi_control {
+            parts.push("ipmi=pipe".to_string());
+        }
+        if let Some(power) = &self.ipmi_power {
+            parts.push(format!("power={power}"));
+        }
+        if let Some(identify) = self.ipmi_identify {
+            parts.push(format!("identify={}", if identify { "on" } else { "off" }));
+        }
+        if let Some(health) = &self.ipmi_health {
+            parts.push(format!("health={health}"));
+        }
+        if let Some(last_sel) = &self.ipmi_last_sel {
+            parts.push(format!("sel={last_sel}"));
+        }
+        parts.join(" | ")
+    }
+
+    fn render(&self) -> Result<()> {
+        if self.rows == 0 {
+            return Ok(());
+        }
+        render_status_line(self.rows - 1, self.cols, &self.status_text())
+    }
+
+    fn banner(&self) -> Result<()> {
+        let mut stderr = io::stderr();
+        writeln!(stderr, "\r\n[gua] disconnected; terminal restored")?;
+        stderr.flush()?;
+        Ok(())
+    }
+}
+
+fn render_status_line(row: u16, cols: u16, text: &str) -> Result<()> {
+    let mut line = truncate_to_width(text, cols as usize);
+    if cols as usize > line.len() {
+        line.push_str(&" ".repeat(cols as usize - line.len()));
+    }
+    let mut stderr = io::stderr();
+    queue!(
+        stderr,
+        SavePosition,
+        MoveTo(0, row),
+        SetAttribute(Attribute::Reverse),
+        Clear(ClearType::CurrentLine),
+        Print(line),
+        SetAttribute(Attribute::Reset),
+        RestorePosition
+    )
+    .map_err(Error::Io)?;
+    stderr.flush()?;
+    Ok(())
+}
+
+fn truncate_to_width(text: &str, width: usize) -> String {
+    text.chars().take(width).collect()
+}
+
+fn remote_rows_for_chrome(rows: u16, chrome_enabled: bool) -> u16 {
+    if chrome_enabled {
+        rows.saturating_sub(1).max(1)
+    } else {
+        rows
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +372,7 @@ fn env_u32(name: &str, default: u32) -> u32 {
 fn maybe_send_terminal_size(
     session: &mut Session,
     geometry: &TerminalGeometry,
+    options: TextSessionOptions,
     last_terminal_size: &mut Option<(u16, u16)>,
 ) -> Result<()> {
     let Ok((cols, rows)) = terminal_size() else {
@@ -205,7 +383,7 @@ fn maybe_send_terminal_size(
         return Ok(());
     }
 
-    send_terminal_size(session, geometry, cols, rows)?;
+    send_terminal_size(session, geometry, options, cols, rows)?;
     *last_terminal_size = Some((cols, rows));
     Ok(())
 }
@@ -213,10 +391,12 @@ fn maybe_send_terminal_size(
 fn send_terminal_size(
     session: &mut Session,
     geometry: &TerminalGeometry,
+    options: TextSessionOptions,
     cols: u16,
     rows: u16,
 ) -> Result<()> {
-    let (width, height) = guacamole_pixel_size(cols, rows, geometry);
+    let remote_rows = remote_rows_for_chrome(rows, options.chrome);
+    let (width, height) = guacamole_pixel_size(cols, remote_rows, geometry);
     session.send_size(width, height, geometry.dpi)
 }
 
@@ -634,7 +814,13 @@ mod tests {
             InputAction::Exit
         );
         assert_eq!(
-            key_to_action(ctrl_bracket, TextSessionOptions { ipmi_control: true }),
+            key_to_action(
+                ctrl_bracket,
+                TextSessionOptions {
+                    ipmi_control: true,
+                    chrome: false
+                }
+            ),
             InputAction::Key {
                 keysym: 0x1D,
                 modifiers: vec![]
@@ -643,7 +829,10 @@ mod tests {
         assert_eq!(
             key_to_action(
                 KeyEvent::new(KeyCode::Char('5'), KeyModifiers::CONTROL),
-                TextSessionOptions { ipmi_control: true }
+                TextSessionOptions {
+                    ipmi_control: true,
+                    chrome: false
+                }
             ),
             InputAction::Exit
         );
@@ -754,6 +943,36 @@ mod tests {
             ),
             InputAction::Ignore
         );
+    }
+
+    #[test]
+    fn chrome_reserves_one_remote_row_without_underflow() {
+        assert_eq!(remote_rows_for_chrome(24, false), 24);
+        assert_eq!(remote_rows_for_chrome(24, true), 23);
+        assert_eq!(remote_rows_for_chrome(1, true), 1);
+        assert_eq!(remote_rows_for_chrome(0, true), 1);
+    }
+
+    #[test]
+    fn chrome_status_includes_ipmi_state_and_truncates() {
+        let mut chrome = ChromeState {
+            stdout_bytes: 42,
+            ipmi_control: true,
+            ..ChromeState::default()
+        };
+        chrome.update_ipmi(IpmiControlEvent::State(gua_session::IpmiState {
+            power: "on".into(),
+            identify: Some(false),
+            health: Some("sol-connected".into()),
+            last_sel: Some("Fan 2 Failure".into()),
+        }));
+        let status = chrome.status_text();
+        assert!(status.contains("out=42B"));
+        assert!(status.contains("ipmi=pipe"));
+        assert!(status.contains("power=on"));
+        assert!(status.contains("identify=off"));
+        assert!(status.contains("health=sol-connected"));
+        assert_eq!(truncate_to_width("abcdef", 3), "abc");
     }
 
     #[test]

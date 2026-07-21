@@ -59,6 +59,22 @@ terminal font metrics when exact remote `stty size` fidelity matters.
 The script uses a temporary `GUA_CONFIG` and `GUA_TOKEN_STORE_DIR`, so it does
 not mutate the operator's normal guacamole-cli profile/token state.
 
+## Optional chrome smoke
+
+The live suite intentionally exercises the default raw/passthrough path. For a
+manual chrome smoke, run a short session with `--chrome`, confirm that the local
+status line appears at the bottom of the terminal while the remote prompt remains
+usable, then exit with Ctrl-]:
+
+```sh
+GUA_CONFIG=/tmp/gua-mvp-config.toml \
+GUA_TOKEN_STORE_DIR=/tmp/gua-mvp-tokens \
+target/debug/gua --server http://10.2.0.186:8080/guacamole connect 4 --chrome
+```
+
+Use `--raw` to force pure passthrough; this is still the default mode used by
+automated e2e tests.
+
 ## IPMI SOL control foundation
 
 Issue #49 adds client-side protocol support for IPMI SOL's split-channel model:

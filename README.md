@@ -72,7 +72,9 @@ gua record get|play <id>           # guacenc / guaclog
 `text-output` parameter enabled (`text-output=raw` is preferred for CLI-only use). The client opens
 the authenticated guacamole-client WebSocket tunnel, consumes the owner-scoped `STDOUT` pipe
 (`application/octet-stream`), acknowledges each received `blob`, and writes decoded raw PTY bytes to
-the local terminal. Press `Ctrl-]` to exit the local client loop.
+the local terminal. Pure passthrough is the default and can be forced with `--raw`; `--chrome`
+adds an optional local status line and disconnect banner while reserving one remote row so the
+status does not overwrite the inner terminal. Press `Ctrl-]` to exit the local client loop.
 
 Text input is sent as Guacamole `key` instructions. The client maps printable Unicode, control
 keys, navigation keys, F1-F35, keypad variants, plain Ctrl+printable C0/DEL controls, and
@@ -88,8 +90,9 @@ operations. The session layer recognizes server-opened `ipmi-control` streams, p
 messages, can send command JSON over a lazily opened client-side `ipmi-control` pipe, and classifies
 commands by confirmation tier. Use `gua connect <id> --ipmi-control` for IPMI SOL sessions that still
 need the server-rendered Ctrl-] fallback menu; in that mode Ctrl-] is passed through and Ctrl-5 remains
-the local escape. Native ratatui status/chrome/palette rendering is the next UI layer on top of this
-protocol foundation.
+the local escape. With `--chrome`, the status line also reflects `ipmi-control` availability and
+state/result/SEL summaries. A richer command palette and scrollable SEL table can layer on the same
+chrome foundation.
 
 This is still a raw passthrough. Clipboard stream integration, richer fallback UX,
 and broader live e2e coverage are tracked as follow-up issues.

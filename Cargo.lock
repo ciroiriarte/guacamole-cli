@@ -645,6 +645,8 @@ dependencies = [
  "gua-core",
  "gua-proto",
  "gua-tunnel",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

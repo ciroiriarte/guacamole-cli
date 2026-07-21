@@ -47,8 +47,25 @@ const XK_TAB: u32 = 0xFF09;
 const XK_BACK_TAB: u32 = 0xFE20;
 const UNICODE_KEYSYM_MASK: u32 = 0x0100_0000;
 
+/// Runtime options for the raw text-session loop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextSessionOptions {
+    /// Enable IPMI SOL client behavior. Until the structured `ipmi-control` UI
+    /// is available, this makes Ctrl-] pass through to the remote server-rendered
+    /// fallback menu; Ctrl-5 remains the local escape.
+    pub ipmi_control: bool,
+}
+
 /// Run the minimal text-mode console loop.
 pub fn run_text_session(session: &mut Session) -> Result<()> {
+    run_text_session_with_options(session, TextSessionOptions::default())
+}
+
+/// Run the minimal text-mode console loop with explicit options.
+pub fn run_text_session_with_options(
+    session: &mut Session,
+    options: TextSessionOptions,
+) -> Result<()> {
     let interrupted = Arc::new(AtomicBool::new(false));
     let _raw = RawModeGuard::enter(Arc::clone(&interrupted))?;
     let mut stdout = io::stdout();
@@ -66,7 +83,7 @@ pub fn run_text_session(session: &mut Session) -> Result<()> {
 
         match poll_input(POLL_INTERVAL) {
             Ok(true) => match read_input_event() {
-                Ok(Some(Event::Key(key))) => match key_to_action(key) {
+                Ok(Some(Event::Key(key))) => match key_to_action(key, options) {
                     InputAction::Exit => break,
                     InputAction::Ignore => {}
                     InputAction::Key { keysym, modifiers } => {
@@ -130,7 +147,11 @@ fn handle_session_event(stdout: &mut impl Write, event: SessionEvent) -> Result<
             Ok(true)
         }
         SessionEvent::StdoutEnded | SessionEvent::Disconnected => Ok(false),
-        SessionEvent::StdoutOpened { .. } | SessionEvent::Ignored(_) => Ok(true),
+        SessionEvent::IpmiControlOpened { .. }
+        | SessionEvent::IpmiControl(_)
+        | SessionEvent::IpmiControlEnded
+        | SessionEvent::StdoutOpened { .. }
+        | SessionEvent::Ignored(_) => Ok(true),
     }
 }
 
@@ -228,12 +249,12 @@ enum InputAction {
     Key { keysym: u32, modifiers: Vec<u32> },
 }
 
-fn key_to_action(key: KeyEvent) -> InputAction {
+fn key_to_action(key: KeyEvent, options: TextSessionOptions) -> InputAction {
     if key.kind == KeyEventKind::Release {
         return InputAction::Ignore;
     }
 
-    if is_local_exit(&key) {
+    if is_local_exit(&key, options) {
         return InputAction::Exit;
     }
 
@@ -254,9 +275,19 @@ fn key_to_action(key: KeyEvent) -> InputAction {
     }
 }
 
-fn is_local_exit(key: &KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'))
+fn is_local_exit(key: &KeyEvent, options: TextSessionOptions) -> bool {
+    if !key.modifiers.contains(KeyModifiers::CONTROL) {
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Char('5') => true,
+        // IPMI SOL historically exposes a server-rendered Ctrl-] fallback menu
+        // when the structured `ipmi-control` pipe is unavailable. In IPMI mode,
+        // pass Ctrl-] through and keep Ctrl-5 as the local escape hatch.
+        KeyCode::Char(']') => !options.ipmi_control,
+        _ => false,
+    }
 }
 
 fn text_control_char_keysym(key: KeyEvent) -> Option<u32> {
@@ -279,6 +310,7 @@ fn text_control_char_keysym(key: KeyEvent) -> Option<u32> {
         KeyCode::Char(' ') | KeyCode::Char('2') => Some(0x00),
         KeyCode::Char('[') | KeyCode::Char('3') => Some(0x1B),
         KeyCode::Char('\\') | KeyCode::Char('4') => Some(0x1C),
+        KeyCode::Char(']') | KeyCode::Char('5') => Some(0x1D),
         KeyCode::Char('^') | KeyCode::Char('6') => Some(0x1E),
         KeyCode::Char('_') | KeyCode::Char('-') | KeyCode::Char('7') => Some(0x1F),
         KeyCode::Char('?') | KeyCode::Char('8') => Some(0x7F),
@@ -509,28 +541,40 @@ mod tests {
     #[test]
     fn maps_basic_keys() {
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 'a' as u32,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: XK_RETURN,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 3,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::CONTROL)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('5'), KeyModifiers::CONTROL),
+                TextSessionOptions::default()
+            ),
             InputAction::Exit
         );
     }
@@ -538,31 +582,43 @@ mod tests {
     #[test]
     fn maps_plain_ctrl_printables_to_text_c0_controls() {
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 4,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 0,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 0x1B,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(
-                KeyCode::Char('d'),
-                KeyModifiers::CONTROL | KeyModifiers::ALT
-            )),
+            key_to_action(
+                KeyEvent::new(
+                    KeyCode::Char('d'),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT
+                ),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 'd' as u32,
                 modifiers: vec![XK_CONTROL_L, XK_ALT_L]
@@ -571,19 +627,45 @@ mod tests {
     }
 
     #[test]
+    fn ipmi_mode_passes_ctrl_bracket_for_server_fallback_menu() {
+        let ctrl_bracket = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL);
+        assert_eq!(
+            key_to_action(ctrl_bracket, TextSessionOptions::default()),
+            InputAction::Exit
+        );
+        assert_eq!(
+            key_to_action(ctrl_bracket, TextSessionOptions { ipmi_control: true }),
+            InputAction::Key {
+                keysym: 0x1D,
+                modifiers: vec![]
+            }
+        );
+        assert_eq!(
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('5'), KeyModifiers::CONTROL),
+                TextSessionOptions { ipmi_control: true }
+            ),
+            InputAction::Exit
+        );
+    }
+
+    #[test]
     fn maps_navigation_and_function_modifiers() {
         assert_eq!(
-            key_to_action(KeyEvent::new(
-                KeyCode::Left,
-                KeyModifiers::SHIFT | KeyModifiers::ALT
-            )),
+            key_to_action(
+                KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT | KeyModifiers::ALT),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 0xFF51,
                 modifiers: vec![XK_SHIFT_L, XK_ALT_L]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::F(13), KeyModifiers::CONTROL)),
+            key_to_action(
+                KeyEvent::new(KeyCode::F(13), KeyModifiers::CONTROL),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 0xFFCA,
                 modifiers: vec![XK_CONTROL_L]
@@ -602,17 +684,23 @@ mod tests {
     #[test]
     fn preserves_shift_for_modified_printables() {
         assert_eq!(
-            key_to_action(KeyEvent::new(
-                KeyCode::Char('F'),
-                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            )),
+            key_to_action(
+                KeyEvent::new(
+                    KeyCode::Char('F'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                ),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 'F' as u32,
                 modifiers: vec![XK_SHIFT_L, XK_CONTROL_L]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: 'A' as u32,
                 modifiers: vec![]
@@ -623,14 +711,20 @@ mod tests {
     #[test]
     fn maps_backtab_distinctly_from_tab() {
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE)),
+            key_to_action(
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: XK_BACK_TAB,
                 modifiers: vec![]
             }
         );
         assert_eq!(
-            key_to_action(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            key_to_action(
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+                TextSessionOptions::default()
+            ),
             InputAction::Key {
                 keysym: XK_TAB,
                 modifiers: vec![]
@@ -650,11 +744,14 @@ mod tests {
     #[test]
     fn ignores_release_events() {
         assert_eq!(
-            key_to_action(KeyEvent::new_with_kind(
-                KeyCode::Char('x'),
-                KeyModifiers::NONE,
-                KeyEventKind::Release,
-            )),
+            key_to_action(
+                KeyEvent::new_with_kind(
+                    KeyCode::Char('x'),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                ),
+                TextSessionOptions::default()
+            ),
             InputAction::Ignore
         );
     }

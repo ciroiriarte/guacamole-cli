@@ -58,3 +58,21 @@ terminal font metrics when exact remote `stty size` fidelity matters.
 
 The script uses a temporary `GUA_CONFIG` and `GUA_TOKEN_STORE_DIR`, so it does
 not mutate the operator's normal guacamole-cli profile/token state.
+
+## IPMI SOL control foundation
+
+Issue #49 adds client-side protocol support for IPMI SOL's split-channel model:
+SOL console bytes use the same `STDOUT` text-output path as SSH/telnet/k8s, while
+structured power/status/SEL messages use a JSON `ipmi-control` pipe. The current
+live SSH harness does not require an IPMI server, but unit tests cover:
+
+- recognizing the server-opened `ipmi-control` pipe;
+- parsing `state`, `result`, and `sel` JSON messages;
+- serializing command JSON;
+- command confirmation tiers;
+- `gua connect --ipmi-control` fallback behavior where Ctrl-] is sent to the
+  server-rendered fallback menu and Ctrl-5 remains the local escape.
+
+When an IPMI-capable guacd test target is available, add a live smoke similar to
+`text-mode-ssh-live.py` that verifies SOL console output plus one non-destructive
+control round-trip (`refresh-status` or `read-sel`).

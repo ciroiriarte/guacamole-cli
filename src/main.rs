@@ -258,7 +258,14 @@ fn run_connect(cli: &Cli, args: &ConnectArgs) -> Result<()> {
         connection_id: &args.id,
     })?;
 
-    let run_result = gua_tui::run_text_session(&mut session);
+    let run_result = if args.ipmi_control {
+        gua_tui::run_text_session_with_options(
+            &mut session,
+            gua_tui::TextSessionOptions { ipmi_control: true },
+        )
+    } else {
+        gua_tui::run_text_session(&mut session)
+    };
     let disconnect_result = session.disconnect();
     run_result.and(disconnect_result)
 }

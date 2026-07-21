@@ -60,7 +60,7 @@ The **only** server-side dependency is the text-output mode for terminal protoco
 gua login                          # /api/tokens, browser-loopback for SSO
 gua connection list|create|update|delete|share
 gua session list|kill
-gua connect <id>                   # SSH/telnet/k8s -> terminal (TUI)
+gua connect <id>                   # SSH/telnet/k8s/IPMI SOL -> terminal (TUI)
 gua connect <id> --mount ~/share   # FUSE drive redirection
 gua connect <id>                   # RDP/VNC/SPICE -> native GUI window
 gua record get|play <id>           # guacenc / guaclog
@@ -68,7 +68,7 @@ gua record get|play <id>           # guacenc / guaclog
 
 ### Text-mode MVP
 
-`gua connect <id>` currently targets SSH/telnet/Kubernetes connections that have the patched guacd
+`gua connect <id>` currently targets SSH/telnet/Kubernetes and IPMI SOL connections that have the patched guacd
 `text-output` parameter enabled (`text-output=raw` is preferred for CLI-only use). The client opens
 the authenticated guacamole-client WebSocket tunnel, consumes the owner-scoped `STDOUT` pipe
 (`application/octet-stream`), acknowledges each received `blob`, and writes decoded raw PTY bytes to
@@ -83,7 +83,15 @@ delimiters because guacamole-cli cannot yet know whether the remote application 
 paste mode. Press `Ctrl-]` to exit the local client loop (`Ctrl-5` is accepted as the same PTY
 escape on terminals that report Ctrl-] that way).
 
-This is still a raw passthrough. Full resize handling, clipboard stream integration, fallback UX,
+IPMI SOL can additionally expose a structured `ipmi-control` JSON pipe for power/status/SEL
+operations. The session layer recognizes server-opened `ipmi-control` streams, parses state/result/SEL
+messages, can send command JSON over a lazily opened client-side `ipmi-control` pipe, and classifies
+commands by confirmation tier. Use `gua connect <id> --ipmi-control` for IPMI SOL sessions that still
+need the server-rendered Ctrl-] fallback menu; in that mode Ctrl-] is passed through and Ctrl-5 remains
+the local escape. Native ratatui status/chrome/palette rendering is the next UI layer on top of this
+protocol foundation.
+
+This is still a raw passthrough. Clipboard stream integration, richer fallback UX,
 and broader live e2e coverage are tracked as follow-up issues.
 
 ## License

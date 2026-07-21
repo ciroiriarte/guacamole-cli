@@ -149,6 +149,9 @@ pub enum SessionCmd {
 pub struct ConnectArgs {
     /// Connection identifier to connect to.
     pub id: String,
+    /// Enable IPMI SOL fallback behavior: Ctrl-] is passed to the remote server menu; use Ctrl-5 to exit locally.
+    #[arg(long)]
+    pub ipmi_control: bool,
     /// Mount the connection's shared drive at this path via FUSE.
     #[arg(long, value_name = "PATH")]
     pub mount: Option<String>,

@@ -54,7 +54,8 @@ pub fn run_text_session(session: &mut Session) -> Result<()> {
 fn key_to_keysym(key: KeyEvent) -> Option<u32> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char(']') => return Some(EXIT_KEYSYM),
+            // Some PTYs report Ctrl-] as Ctrl-5 (same ASCII GS / 0x1D).
+            KeyCode::Char(']') | KeyCode::Char('5') => return Some(EXIT_KEYSYM),
             KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                 return Some((c.to_ascii_uppercase() as u32) - 0x40)
             }
@@ -124,6 +125,10 @@ mod tests {
         assert_eq!(
             key_to_keysym(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(3)
+        );
+        assert_eq!(
+            key_to_keysym(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::CONTROL)),
+            Some(EXIT_KEYSYM)
         );
     }
 }

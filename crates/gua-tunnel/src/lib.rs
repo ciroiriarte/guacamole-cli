@@ -141,7 +141,11 @@ fn ws_read_error(error: WsError) -> Error {
 }
 
 fn is_timeout_message(msg: &str) -> bool {
-    msg.contains("timed out") || msg.contains("WouldBlock") || msg.contains("operation would block")
+    let msg = msg.to_ascii_lowercase();
+    msg.contains("timed out")
+        || msg.contains("wouldblock")
+        || msg.contains("operation would block")
+        || msg.contains("resource temporarily unavailable")
 }
 
 fn websocket_tunnel_url(params: TunnelParams<'_>) -> Result<Url> {

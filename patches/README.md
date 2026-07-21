@@ -7,11 +7,11 @@ that `guacamole-cli` depends on. Patches live here until implemented and (option
 
 | Patch | Status | Tracking issue |
 | --- | --- | --- |
-| `text-output` — opt-in raw-text output mode for terminal protocols | **Implemented** (on `feature/3-text-output-mode`) | [ciroiriarte/guacamole-server#3](https://github.com/ciroiriarte/guacamole-server/issues/3) |
+| `text-output` — opt-in raw-text output modes for terminal protocols | **Implemented** (on `feature/3-text-output-mode`) | [ciroiriarte/guacamole-server#3](https://github.com/ciroiriarte/guacamole-server/issues/3) |
 
 ---
 
-## `text-output` — raw-text output mode for terminal protocols
+## `text-output` — raw-text output modes for terminal protocols
 
 **Goal:** let guacd deliver the exact remote PTY byte stream (raw ANSI) over a Guacamole `pipe`
 stream for SSH / telnet / Kubernetes, so the CLI can present a *true* in-terminal session instead
@@ -19,26 +19,37 @@ of decoding rasterized glyphs.
 
 ### Design
 
-- New **opt-in connection parameter** `text-output` (default `false`).
-- When enabled, tee remote PTY output to an outbound `pipe` stream named **`STDOUT`** with mimetype
+- New **opt-in connection parameter** `text-output` (default `false`). Supported enabled values:
+  - `text-output=true`: tee mode. Raw PTY output is sent to the text pipe while the normal graphical
+    terminal display continues to render for browser clients.
+  - `text-output=raw`: headless/raw mode. Raw PTY output is sent to the text pipe and the graphical
+    terminal render path is skipped. This is the preferred mode for a dedicated CLI consumer.
+- When enabled, guacd opens an outbound `pipe` stream named **`STDOUT`** with mimetype
   **`application/octet-stream`** (the payload is raw bytes carried in base64 `blob` instructions, so
   it is binary-safe; the mimetype is advisory and the client decodes the bytes itself).
+- The stream is allocated on the **connection owner's user socket** (via `guac_user_alloc_stream()`),
+  not on the broadcast client socket. This keeps raw output scoped to the owner and, critically,
+  gives the stream an ack-routable user stream index.
 - The tee is taken **at the protocol source** — in each protocol's PTY read path (SSH/telnet/k8s),
   *upstream of the terminal emulator* — via a **dedicated** `text_output_stream` on `guac_terminal`
   (API `guac_terminal_text_output_{open,write,flush,close}` in `src/terminal/terminal.h`),
   independent of the `guacctl` pipe machinery. This is deliberate: the existing `guac_terminal_echo`
   path strips `ESC`/CSI/OSC sequences, which would defeat a faithful raw stream.
-- Still a **tee**: the graphical display keeps rendering for browser clients — the raw bytes go to
-  the `STDOUT` pipe *in addition to* the normal display path. Buffered (6048 B) and flushed at the
-  terminal frame boundary or when full.
+- Output is buffered in 6048-byte chunks. Tee mode flushes at terminal frame boundaries or when full;
+  raw/headless mode flushes immediately because there is no graphical frame cycle.
+- Clients **must send Guacamole `ack` instructions for each received `blob`**. Guacd tracks up to
+  16 unacknowledged text-output blobs; once that limit is reached, additional buffered text output is
+  dropped instead of blocking the remote PTY/read loop. This bounds memory/backlog and avoids stalling
+  co-attached browser users in tee mode.
 - Inbound STDIN already works via the existing `pipe_handler` →
   `src/terminal/terminal-stdin-stream.c`. No new input path.
 
 ### Backwards compatibility
 
 Fully backwards compatible: additive, opt-in, default off. No new protocol instructions (reuses
-`pipe`/`blob`/`end`), no DB schema change, no web-app change, no ABI break (only additive public API:
-the new `guac_terminal_text_output_*` symbols). Tee mode preserves the browser display.
+`pipe`/`blob`/`end`/`ack`), no DB schema change, no web-app change, no ABI break (only additive public
+API: the new `guac_terminal_text_output_*` symbols). Tee mode preserves the browser display; raw mode
+is opt-in for CLI-only connections.
 
 ### Security considerations
 

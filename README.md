@@ -37,7 +37,7 @@ A plain `ssh` client **cannot** ride the gateway: guacd terminates SSH itself (l
 | **Management** | REST wrapper: tokens/login, connections, groups, users, permissions, sharing profiles, active sessions, history | None |
 | **Session (transport)** | `POST /api/tokens` → WebSocket tunnel → Guacamole instruction protocol | None |
 | **RDP / VNC / SPICE** | native renderer of the drawing instruction set + input/audio/clipboard | None |
-| **SSH / telnet / k8s (text)** | guacd tees raw PTY bytes to a `text/plain` pipe → local TTY interprets ANSI | **Small opt-in guacd patch** (see `patches/`) |
+| **SSH / telnet / k8s (text)** | guacd emits raw PTY bytes on a `STDOUT` pipe (`application/octet-stream`) → local TTY interprets ANSI | **Small opt-in guacd patch** (see `patches/`) |
 | **Copy / paste (text)** | `clipboard` streams — already real UTF-8 text | None |
 | **Shared drives** | Guacamole file streams exposed as a FUSE mount | None |
 

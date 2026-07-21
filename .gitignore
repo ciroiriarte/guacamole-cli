@@ -10,6 +10,7 @@
 
 # OMC / agent operational state
 /.omc/
+/.omx/
 
 # Local env / editor
 /.env

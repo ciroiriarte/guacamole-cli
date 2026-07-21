@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+base64.workspace = true
 gua-core.workspace = true
 gua-proto.workspace = true
 gua-tunnel.workspace = true

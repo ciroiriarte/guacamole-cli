@@ -15,7 +15,7 @@ use gua_core::{Error, Result};
 use gua_rest::{Client, Connection, ConnectionDetail};
 use serde::Serialize;
 
-use cli::{Cli, Command, ConfigCmd, ConnectionCmd, LoginArgs, RecordCmd, SessionCmd};
+use cli::{Cli, Command, ConfigCmd, ConnectArgs, ConnectionCmd, LoginArgs, RecordCmd, SessionCmd};
 
 fn main() {
     let cli = Cli::parse();
@@ -47,7 +47,7 @@ fn run(cli: &Cli) -> Result<()> {
             SessionCmd::List => unimplemented("session list", 18),
             SessionCmd::Kill { .. } => unimplemented("session kill", 18),
         },
-        Command::Connect(_) => unimplemented("connect", 20),
+        Command::Connect(args) => run_connect(cli, args),
         Command::Record(c) => match c {
             RecordCmd::Get { .. } => unimplemented("record get", 41),
             RecordCmd::Play { .. } => unimplemented("record play", 42),
@@ -227,6 +227,48 @@ fn run_connection_get(cli: &Cli, id: &str) -> Result<()> {
     let token = stored_token(cli, &cfg)?;
     let row = ConnectionDetailRow::from(client.get_connection(&data_source, id, &token)?);
     gua_core::output::print(&[row], output_format(cli, &cfg)?)
+}
+
+#[cfg(feature = "tui")]
+fn run_connect(cli: &Cli, args: &ConnectArgs) -> Result<()> {
+    if args.mount.is_some() {
+        return unimplemented("connect --mount", 39);
+    }
+
+    let cfg = Config::load()?;
+    let mut profile = cfg.effective_profile(cli.profile.as_deref())?;
+    if let Some(server) = &cli.server {
+        profile.server = Some(server.clone());
+    }
+    let server = profile.server.ok_or_else(|| {
+        Error::Config("server is not configured (set `gua config set server https://host/guacamole` or pass --server)".into())
+    })?;
+    let data_source = profile.data_source.ok_or_else(|| {
+        Error::Config(
+            "data_source is not configured (run `gua login` or `gua config set data_source <name>`)"
+                .into(),
+        )
+    })?;
+    let token = stored_token(cli, &cfg)?;
+
+    let mut session = gua_session::Session::connect(gua_tunnel::TunnelParams {
+        base_url: &server,
+        token: &token,
+        data_source: &data_source,
+        connection_id: &args.id,
+    })?;
+
+    let run_result = gua_tui::run_text_session(&mut session);
+    let disconnect_result = session.disconnect();
+    run_result.and(disconnect_result)
+}
+
+#[cfg(not(feature = "tui"))]
+fn run_connect(_cli: &Cli, _args: &ConnectArgs) -> Result<()> {
+    Err(Error::Unimplemented(
+        "`gua connect` requires the default `tui` feature; rebuild without `--no-default-features`"
+            .into(),
+    ))
 }
 
 fn is_sensitive_parameter(name: &str) -> bool {

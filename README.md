@@ -66,6 +66,18 @@ gua connect <id>                   # RDP/VNC/SPICE -> native GUI window
 gua record get|play <id>           # guacenc / guaclog
 ```
 
+### Text-mode MVP
+
+`gua connect <id>` currently targets SSH/telnet/Kubernetes connections that have the patched guacd
+`text-output` parameter enabled (`text-output=raw` is preferred for CLI-only use). The client opens
+the authenticated guacamole-client WebSocket tunnel, consumes the owner-scoped `STDOUT` pipe
+(`application/octet-stream`), acknowledges each received `blob`, and writes decoded raw PTY bytes to
+the local terminal. Press `Ctrl-]` to exit the local client loop.
+
+This is intentionally a first-pass raw passthrough. Full resize handling, richer key/modifier/paste
+fidelity, clipboard integration, fallback UX, and live patched-guacd e2e coverage are tracked as
+follow-up issues.
+
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE).

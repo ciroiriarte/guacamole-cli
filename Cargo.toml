@@ -39,6 +39,9 @@ clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 url = { version = "2", features = ["serde"] }
 keyring = "3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tungstenite = { version = "0.24", default-features = false, features = ["rustls-tls-webpki-roots", "handshake"] }
+base64 = "0.22"
+crossterm = "0.28"
 
 # --- dev / test ---
 wiremock = "0.6"
@@ -71,10 +74,9 @@ name = "gua"
 path = "src/main.rs"
 
 [features]
-# Headless (management-only) build is the default so it stays small and fast.
-# Renderer features pull in their crates; those crates gain heavy deps in
-# their own roadmap issues (TUI: #24+, GUI: #29+, FUSE: #39).
-default = []
+# Text mode is the default usable client path. Build with
+# `--no-default-features` for a smaller management-only binary.
+default = ["tui"]
 tui = ["dep:gua-tui"]
 gui = ["dep:gua-gui"]
 fuse = ["dep:gua-fuse"]

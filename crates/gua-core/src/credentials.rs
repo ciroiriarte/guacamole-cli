@@ -232,8 +232,14 @@ impl CredentialStore for KeyringStore {
     }
 }
 
-/// The default store: keyring when the `keyring-store` feature is on, else file.
+/// The default store: `GUA_TOKEN_STORE_DIR` file override, otherwise keyring when
+/// the `keyring-store` feature is on, else the OS data-dir file store.
 pub fn default_store() -> crate::Result<Box<dyn CredentialStore>> {
+    if let Ok(dir) = std::env::var("GUA_TOKEN_STORE_DIR") {
+        if !dir.is_empty() {
+            return Ok(Box::new(FileStore::with_dir(PathBuf::from(dir))));
+        }
+    }
     #[cfg(feature = "keyring-store")]
     {
         Ok(Box::new(KeyringStore::default()))

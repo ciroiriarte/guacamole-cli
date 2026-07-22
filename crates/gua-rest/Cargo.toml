@@ -13,6 +13,8 @@ gua-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true
+secrecy.workspace = true
+reqwest.workspace = true
 
 # Test-support: a reusable wiremock-backed mock gateway. Optional so it never
 # ships in a release build; downstream crates enable it as a dev-dependency:
@@ -25,6 +27,7 @@ test-support = ["dep:wiremock"]
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 gua-rest = { path = ".", features = ["test-support"] }
+tempfile = "3"
 
 [lints]
 workspace = true

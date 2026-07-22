@@ -14,7 +14,7 @@
 //! ```
 
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A running mock gateway. Drop it to shut the server down.
@@ -59,11 +59,72 @@ impl MockGateway {
             .await;
     }
 
+    /// Stub `POST /api/tokens` to reject credentials.
+    pub async fn stub_login_failure(&self) {
+        Mock::given(method("POST"))
+            .and(path("/api/tokens"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("invalid login"))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Stub an authenticated management GET that requires the Guacamole-Token header.
+    pub async fn stub_authenticated_get(
+        &self,
+        data_source: &str,
+        resource: &str,
+        token: &str,
+        body: serde_json::Value,
+    ) {
+        let p = format!("/api/session/data/{data_source}/{resource}");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .and(header("Guacamole-Token", token))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
     /// Stub `DELETE /api/tokens/{token}` to return `204 No Content`.
     pub async fn stub_logout(&self, token: &str) {
         Mock::given(method("DELETE"))
             .and(path(format!("/api/tokens/{token}")))
             .respond_with(ResponseTemplate::new(204))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Stub `GET /api/session/data/{dataSource}/connections`.
+    pub async fn stub_connections(&self, data_source: &str, body: serde_json::Value) {
+        let p = format!("/api/session/data/{data_source}/connections");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Stub `GET /api/session/data/{dataSource}/connections/{id}`.
+    pub async fn stub_connection(&self, data_source: &str, id: &str, body: serde_json::Value) {
+        let p = format!("/api/session/data/{data_source}/connections/{id}");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Stub `GET /api/session/data/{dataSource}/connections/{id}/parameters`.
+    pub async fn stub_connection_parameters(
+        &self,
+        data_source: &str,
+        id: &str,
+        body: serde_json::Value,
+    ) {
+        let p = format!("/api/session/data/{data_source}/connections/{id}/parameters");
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&self.server)
             .await;
     }

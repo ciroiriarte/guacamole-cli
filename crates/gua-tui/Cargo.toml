@@ -9,8 +9,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+crossterm.workspace = true
 gua-core.workspace = true
 gua-session.workspace = true
+signal-hook.workspace = true
 
 [lints]
 workspace = true

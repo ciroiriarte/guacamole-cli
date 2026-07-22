@@ -9,6 +9,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+secrecy.workspace = true
+url.workspace = true
+tungstenite.workspace = true
 gua-core.workspace = true
 gua-proto.workspace = true
 

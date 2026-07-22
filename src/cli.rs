@@ -72,7 +72,7 @@ impl From<OutputArg> for OutputFormat {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Authenticate to the gateway and store a session token.
-    Login,
+    Login(LoginArgs),
     /// Invalidate the stored session token.
     Logout,
     /// Manage connections.
@@ -89,6 +89,18 @@ pub enum Command {
     /// Read and write local configuration.
     #[command(subcommand)]
     Config(ConfigCmd),
+}
+
+/// `gua login ...`
+#[derive(Debug, clap::Args)]
+pub struct LoginArgs {
+    /// Username to authenticate as (or GUA_USERNAME).
+    #[arg(short, long, env = "GUA_USERNAME")]
+    pub username: Option<String>,
+
+    /// Password (or GUA_PASSWORD). Omit to read from stdin.
+    #[arg(short, long, env = "GUA_PASSWORD", hide_env_values = true)]
+    pub password: Option<String>,
 }
 
 /// `gua connection ...`
@@ -137,6 +149,15 @@ pub enum SessionCmd {
 pub struct ConnectArgs {
     /// Connection identifier to connect to.
     pub id: String,
+    /// Enable local TUI chrome: status line and disconnect banner.
+    #[arg(long, conflicts_with = "raw")]
+    pub chrome: bool,
+    /// Force pure passthrough without local TUI chrome. This does not set the server-side `text-output=raw` connection parameter.
+    #[arg(long, alias = "no-chrome", conflicts_with = "chrome")]
+    pub raw: bool,
+    /// Enable IPMI SOL fallback behavior: Ctrl-] is passed to the remote server menu; use Ctrl-5 to exit locally.
+    #[arg(long)]
+    pub ipmi_control: bool,
     /// Mount the connection's shared drive at this path via FUSE.
     #[arg(long, value_name = "PATH")]
     pub mount: Option<String>,

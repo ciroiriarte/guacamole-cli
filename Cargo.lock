@@ -562,6 +562,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crossterm 0.28.1",
  "gua-core",
  "gua-fuse",
  "gua-gui",

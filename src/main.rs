@@ -3,9 +3,11 @@
 mod cli;
 
 use std::collections::BTreeMap;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 use clap::Parser;
+use crossterm::event::{read as read_terminal_event, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use secrecy::SecretString;
 
 use gua_core::config::{Config, DEFAULT_PROFILE};
@@ -329,11 +331,57 @@ fn run_logout(cli: &Cli) -> Result<()> {
 }
 
 fn read_password_from_stdin() -> Result<String> {
+    if !io::stdin().is_terminal() {
+        let mut password = String::new();
+        io::stdin().read_line(&mut password)?;
+        return Ok(password.trim_end_matches(['\r', '\n']).to_string());
+    }
+
     eprint!("Password: ");
     io::stderr().flush()?;
+
+    let _raw = PasswordRawModeGuard::enter()?;
     let mut password = String::new();
-    io::stdin().read_line(&mut password)?;
-    Ok(password.trim_end_matches(['\r', '\n']).to_string())
+
+    loop {
+        match read_terminal_event().map_err(|e| Error::Io(io::Error::other(e)))? {
+            Event::Key(key) if key.kind == KeyEventKind::Release => continue,
+            Event::Key(key) => match key.code {
+                KeyCode::Enter => {
+                    eprintln!();
+                    return Ok(password);
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    eprintln!();
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "password prompt interrupted",
+                    )));
+                }
+                KeyCode::Char(ch) => password.push(ch),
+                KeyCode::Backspace => {
+                    password.pop();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+struct PasswordRawModeGuard;
+
+impl PasswordRawModeGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode().map_err(|e| Error::Io(io::Error::other(e)))?;
+        Ok(Self)
+    }
+}
+
+impl Drop for PasswordRawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
 }
 
 fn run_config(cli: &Cli, cmd: &ConfigCmd) -> Result<()> {

@@ -152,8 +152,8 @@ pub struct ConnectArgs {
     /// Enable local TUI chrome: status line and disconnect banner.
     #[arg(long, conflicts_with = "raw")]
     pub chrome: bool,
-    /// Force pure passthrough without local TUI chrome. This is the default MVP mode.
-    #[arg(long, conflicts_with = "chrome")]
+    /// Force pure passthrough without local TUI chrome. This does not set the server-side `text-output=raw` connection parameter.
+    #[arg(long, alias = "no-chrome", conflicts_with = "chrome")]
     pub raw: bool,
     /// Enable IPMI SOL fallback behavior: Ctrl-] is passed to the remote server menu; use Ctrl-5 to exit locally.
     #[arg(long)]

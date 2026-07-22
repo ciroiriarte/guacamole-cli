@@ -35,6 +35,7 @@ use signal_hook::{
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(1);
+const MAX_DRAIN_EVENTS_PER_PASS: usize = 64;
 const PASTE_DRAIN_CHARS: usize = 256;
 const DEFAULT_GUAC_DPI: u32 = 96;
 const DEFAULT_CELL_WIDTH_PX: u32 = 9;
@@ -94,6 +95,10 @@ pub fn run_text_session_with_options(
 
         maybe_send_terminal_size(session, &geometry, options, &mut last_terminal_size)?;
 
+        if !drain_session_events(session, &mut stdout, chrome.as_mut(), DRAIN_INTERVAL)? {
+            break;
+        }
+
         match poll_input(POLL_INTERVAL) {
             Ok(true) => match read_input_event() {
                 Ok(Some(Event::Key(key))) => match key_to_action(key, options) {
@@ -121,7 +126,7 @@ pub fn run_text_session_with_options(
             Err(e) => return Err(e),
         }
 
-        if !drain_session_event(session, &mut stdout, chrome.as_mut(), POLL_INTERVAL)? {
+        if !drain_session_events(session, &mut stdout, chrome.as_mut(), DRAIN_INTERVAL)? {
             break;
         }
     }
@@ -151,16 +156,22 @@ fn read_input_event() -> Result<Option<Event>> {
     }
 }
 
-fn drain_session_event(
+fn drain_session_events(
     session: &mut Session,
     stdout: &mut impl Write,
-    chrome: Option<&mut ChromeState>,
+    mut chrome: Option<&mut ChromeState>,
     timeout: Duration,
 ) -> Result<bool> {
-    let Some(event) = session.next_event_timeout(timeout)? else {
-        return Ok(true);
-    };
-    handle_session_event(stdout, chrome, event)
+    for _ in 0..MAX_DRAIN_EVENTS_PER_PASS {
+        let Some(event) = session.next_event_timeout(timeout)? else {
+            return Ok(true);
+        };
+        if !handle_session_event(stdout, chrome.as_deref_mut(), event)? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 fn handle_session_event(
@@ -216,7 +227,7 @@ fn send_paste(
     for (idx, keysym) in text.chars().map(paste_char_to_keysym).enumerate() {
         session.send_key(keysym)?;
         if (idx + 1) % PASTE_DRAIN_CHARS == 0
-            && !drain_session_event(session, stdout, chrome.as_deref_mut(), DRAIN_INTERVAL)?
+            && !drain_session_events(session, stdout, chrome.as_deref_mut(), DRAIN_INTERVAL)?
         {
             break;
         }
@@ -276,7 +287,12 @@ impl ChromeState {
             }
             .to_string(),
             format!("out={}B", self.stdout_bytes),
-            "exit=Ctrl-]".to_string(),
+            if self.ipmi_control {
+                "exit=Ctrl-5"
+            } else {
+                "exit=Ctrl-]"
+            }
+            .to_string(),
         ];
         if self.ipmi_control {
             parts.push("ipmi=pipe".to_string());
@@ -951,6 +967,16 @@ mod tests {
         assert_eq!(remote_rows_for_chrome(24, true), 23);
         assert_eq!(remote_rows_for_chrome(1, true), 1);
         assert_eq!(remote_rows_for_chrome(0, true), 1);
+    }
+
+    #[test]
+    fn chrome_status_uses_ipmi_escape_hint() {
+        let chrome = ChromeState {
+            ipmi_control: true,
+            ..ChromeState::default()
+        };
+        assert!(chrome.status_text().contains("exit=Ctrl-5"));
+        assert!(!chrome.status_text().contains("exit=Ctrl-]"));
     }
 
     #[test]

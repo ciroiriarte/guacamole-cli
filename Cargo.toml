@@ -94,6 +94,7 @@ gua-gui = { workspace = true, optional = true }
 gua-fuse = { workspace = true, optional = true }
 anyhow.workspace = true
 clap.workspace = true
+crossterm.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 tracing.workspace = true

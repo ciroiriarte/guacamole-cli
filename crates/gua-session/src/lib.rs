@@ -446,9 +446,9 @@ fn classify_pipe(inst: &Instruction) -> Result<(String, String, PipeKind)> {
     let name = inst
         .arg(2)
         .ok_or_else(|| Error::Protocol("pipe missing name".into()))?;
-    let kind = match name {
-        STDOUT_PIPE_NAME => PipeKind::Stdout,
-        IPMI_CONTROL_PIPE_NAME => PipeKind::IpmiControl,
+    let kind = match (name, mimetype.as_str()) {
+        (STDOUT_PIPE_NAME, STDOUT_MIMETYPE) => PipeKind::Stdout,
+        (IPMI_CONTROL_PIPE_NAME, IPMI_CONTROL_MIMETYPE) => PipeKind::IpmiControl,
         _ => PipeKind::Other,
     };
     Ok((stream, mimetype, kind))
@@ -474,6 +474,14 @@ mod tests {
         assert_eq!(stream, "7");
         assert_eq!(mimetype, IPMI_CONTROL_MIMETYPE);
         assert_eq!(kind, PipeKind::IpmiControl);
+    }
+
+    #[test]
+    fn ignores_stdout_pipe_with_unexpected_mimetype() {
+        let inst = Instruction::new("pipe", ["2", "text/plain", STDOUT_PIPE_NAME]);
+        let (_, mimetype, kind) = classify_pipe(&inst).unwrap();
+        assert_eq!(mimetype, "text/plain");
+        assert_eq!(kind, PipeKind::Other);
     }
 
     #[test]

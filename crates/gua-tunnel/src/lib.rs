@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::io::ErrorKind;
 use std::time::Duration;
 
 use gua_core::credentials::Token;
@@ -63,6 +64,8 @@ impl Tunnel {
             if let Some(inst) = self.try_decode_next()? {
                 return Ok(inst);
             }
+            // A transient read (notably EINTR, which a terminal resize delivers
+            // via SIGWINCH) carries no data and is not a disconnect: retry.
             self.read_one_message()?;
         }
     }
@@ -79,8 +82,8 @@ impl Tunnel {
         self.set_read_timeout(None)?;
 
         match result {
-            Ok(()) => self.try_decode_next(),
-            Err(Error::Transport(msg)) if is_timeout_message(&msg) => Ok(None),
+            Ok(ReadOutcome::Message) => self.try_decode_next(),
+            Ok(ReadOutcome::Transient) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -91,8 +94,14 @@ impl Tunnel {
             .map_err(|e| Error::Protocol(e.to_string()))
     }
 
-    fn read_one_message(&mut self) -> Result<()> {
-        let message = self.socket.read().map_err(ws_read_error)?;
+    fn read_one_message(&mut self) -> Result<ReadOutcome> {
+        let message = match self.socket.read() {
+            Ok(message) => message,
+            Err(WsError::Io(io)) if is_transient_read(&io) => {
+                return Ok(ReadOutcome::Transient)
+            }
+            Err(e) => return Err(ws_read_error(e)),
+        };
         match message {
             Message::Text(s) => self.decoder.push_str(&s),
             Message::Binary(b) => self.decoder.push_bytes(&b),
@@ -112,7 +121,7 @@ impl Tunnel {
             }
             Message::Frame(_) => {}
         }
-        Ok(())
+        Ok(ReadOutcome::Message)
     }
 
     fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<()> {
@@ -140,12 +149,27 @@ fn ws_read_error(error: WsError) -> Error {
     }
 }
 
-fn is_timeout_message(msg: &str) -> bool {
-    let msg = msg.to_ascii_lowercase();
-    msg.contains("timed out")
-        || msg.contains("wouldblock")
-        || msg.contains("operation would block")
-        || msg.contains("resource temporarily unavailable")
+/// Outcome of a single WebSocket read.
+enum ReadOutcome {
+    /// A message was read and handed to the decoder.
+    Message,
+    /// The read ended without data for a reason that is not a disconnect, and
+    /// may simply be retried.
+    Transient,
+}
+
+/// Whether a read error is transient — the read produced no data but the tunnel
+/// is still healthy, so it can be retried or reported as "nothing yet".
+///
+/// `TimedOut`/`WouldBlock` are the expected outcome of a read deadline.
+/// `Interrupted` (EINTR) is delivered whenever a signal lands during a blocking
+/// read; SIGWINCH from a terminal resize is the common case, and treating that
+/// as a transport failure would tear down a perfectly healthy session.
+fn is_transient_read(io: &std::io::Error) -> bool {
+    matches!(
+        io.kind(),
+        ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+    )
 }
 
 fn websocket_tunnel_url(params: TunnelParams<'_>) -> Result<Url> {

@@ -1,7 +1,7 @@
-From 8356da2ee59227a1657a072d0c8eb7dec160212d Mon Sep 17 00:00:00 2001
+From 51881ff17d61d96f10e375f41c5c17aec6dc1950 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 01/15] terminal: add opt-in raw text-output pipe stream
+Subject: [PATCH 01/16] terminal: add opt-in raw text-output pipe stream
 
 Add a dedicated outbound pipe stream to guac_terminal that tees the raw
 terminal (PTY) byte stream, verbatim, to the client in addition to the
@@ -316,10 +316,10 @@ index d1a0bae6..29ab0f61 100644
 2.54.0
 
 
-From 1206a1dfdfaf5fe2051bf473c2962b3cdc3c2fd7 Mon Sep 17 00:00:00 2001
+From 947eb3f5e90fe50498348132471245c0c76ebe22 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 02/15] ssh: add opt-in "text-output" parameter
+Subject: [PATCH 02/16] ssh: add opt-in "text-output" parameter
 
 Wire the new text-output mode into the SSH protocol. Adds the boolean
 "text-output" connection parameter (default false). When enabled, the raw
@@ -445,10 +445,10 @@ index 95a62141..af3b68c5 100644
 2.54.0
 
 
-From 151bb7543446b804e24fc1e549377de25081d3b1 Mon Sep 17 00:00:00 2001
+From 11201d0890770331e8dad29f9460faeb4a33efe0 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 03/15] telnet: add opt-in "text-output" parameter
+Subject: [PATCH 03/16] telnet: add opt-in "text-output" parameter
 
 Wire text-output mode into the telnet protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote byte
@@ -570,10 +570,10 @@ index 24e489cb..d8b6c3d4 100644
 2.54.0
 
 
-From a5f38a23685be8d84d5afd8897ea3f74e42fc768 Mon Sep 17 00:00:00 2001
+From 9eb0931b02f9000d2ac977add6da26090e78bd00 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 04/15] kubernetes: add opt-in "text-output" parameter
+Subject: [PATCH 04/16] kubernetes: add opt-in "text-output" parameter
 
 Wire text-output mode into the Kubernetes protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote bytes
@@ -694,10 +694,10 @@ index fed7f584..428e2d97 100644
 2.54.0
 
 
-From c5cc5937e6e71e4a1286bdff303e7d81a6484b35 Mon Sep 17 00:00:00 2001
+From 80090eaadb09380533f6927a24d22afacd1fa1c0 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 11:37:13 -0300
-Subject: [PATCH 05/15] docs: add text-output smoke test
+Subject: [PATCH 05/16] docs: add text-output smoke test
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -1134,10 +1134,10 @@ index 00000000..b49d1c63
 2.54.0
 
 
-From 6148a4fa32e144f77a191bdcb97b95a51d5881d3 Mon Sep 17 00:00:00 2001
+From 3e97019a9a301e83512b0d9e6cc9db4ec7ea2ad5 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 20:46:34 -0300
-Subject: [PATCH 06/15] test: add direct-guacd text-output e2e harness
+Subject: [PATCH 06/16] test: add direct-guacd text-output e2e harness
  (SSH/telnet/k8s)
 
 Adds a manual end-to-end test harness for the text-output feature that
@@ -1618,10 +1618,10 @@ index 00000000..aa427cb5
 2.54.0
 
 
-From 7bfa3554313ae06dedde2e3a2aa360b9d674b724 Mon Sep 17 00:00:00 2001
+From 329f78bbb2d39616860c492e91d60252a480aaf7 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:26:31 -0300
-Subject: [PATCH 07/15] terminal: deliver text-output via a per-user (owner)
+Subject: [PATCH 07/16] terminal: deliver text-output via a per-user (owner)
  stream
 
 The text-output STDOUT pipe was allocated with guac_client_alloc_stream()
@@ -1874,10 +1874,10 @@ index 99bf1463..62cf2493 100644
 2.54.0
 
 
-From cfa11fe360cce275acdcb8fb55b538b0e63d4800 Mon Sep 17 00:00:00 2001
+From 79284b2814d164cdcd74fd203dbe6ec74f28fbd5 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:37:04 -0300
-Subject: [PATCH 08/15] terminal: add flow control to text-output via ack
+Subject: [PATCH 08/16] terminal: add flow control to text-output via ack
  backpressure
 
 Track the number of text-output blobs sent to the connection owner but
@@ -2163,10 +2163,10 @@ index aa427cb5..f5db25b8 100755
 2.54.0
 
 
-From 0ab28268e3bdbe80f8604690aa2d5e4ca1574da6 Mon Sep 17 00:00:00 2001
+From 45fe36532b59218bf904dbeb79e53135e89b2b99 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 23:38:57 -0300
-Subject: [PATCH 09/15] terminal: add headless "text-output=raw" mode (suppress
+Subject: [PATCH 09/16] terminal: add headless "text-output=raw" mode (suppress
  rendering)
 
 Extend the text-output parameter to accept "raw" in addition to "true":
@@ -2713,10 +2713,10 @@ index 4dc2853f..1550c145 100755
 2.54.0
 
 
-From edc7c22ca83d8a01c7f16b7189b41de852419311 Mon Sep 17 00:00:00 2001
+From 30ed78fc59d2b975f07064bf6afa1b6f90893137 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Tue, 21 Jul 2026 23:59:51 -0300
-Subject: [PATCH 10/15] Handle text-output backpressure safely
+Subject: [PATCH 10/16] Handle text-output backpressure safely
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -2774,10 +2774,10 @@ index 75b814d9..1183bde0 100644
 2.54.0
 
 
-From b6afe1ba719e87dd32fb61935b48122e2d96aeb2 Mon Sep 17 00:00:00 2001
+From 4045f35fc27a273bb0fcc1a03123396831ae2aa4 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 03:27:33 -0300
-Subject: [PATCH 11/15] Add text-output flow-control tests
+Subject: [PATCH 11/16] Add text-output flow-control tests
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -3215,10 +3215,10 @@ index 00000000..85863630
 2.54.0
 
 
-From 3cd10feb7048c47b708520ce81befb90f8f0f6a7 Mon Sep 17 00:00:00 2001
+From 248a68c4a2b50b9da18bde233fd87c2025cd7fc2 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 13:59:23 -0300
-Subject: [PATCH 12/15] Bound text-output backpressure by bytes, not blob count
+Subject: [PATCH 12/16] Bound text-output backpressure by bytes, not blob count
 
 The outstanding-output window was capped at 16 blobs with no bound on the
 volume those blobs represented. In raw (headless) mode every write is
@@ -3555,10 +3555,10 @@ index 85863630..9197570e 100644
 2.54.0
 
 
-From 80dd876db292ae456e1d3d5e192c4d3fdae01442 Mon Sep 17 00:00:00 2001
+From e6ddbe88e8a9799e3231dc5885b8d5fed1be8b2e Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 13:59:23 -0300
-Subject: [PATCH 13/15] Document text-output flow-control contract
+Subject: [PATCH 13/16] Document text-output flow-control contract
 
 README-text-output.md described the stream and its security gating but not
 the ack contract clients must honor, nor what happens when they don't --
@@ -3652,10 +3652,10 @@ index 748b2f18..eba37bc2 100644
 2.54.0
 
 
-From 8139d2762cc1d5f884546a9437a26a84a1caccba Mon Sep 17 00:00:00 2001
+From 1ceb225088368a4be190b249992508d6419f1465 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 14:04:36 -0300
-Subject: [PATCH 14/15] Link libguac explicitly into the terminal test binary
+Subject: [PATCH 14/16] Link libguac explicitly into the terminal test binary
 
 The text-output tests reference libguac directly (guac_client_alloc,
 guac_user_alloc, guac_socket_open, the guac_protocol_send_* family), but
@@ -3696,10 +3696,10 @@ index 00a89afd..16640a52 100644
 2.54.0
 
 
-From afb5d38afbe5848593c0af0ef1ab2a90cfbed703 Mon Sep 17 00:00:00 2001
+From b78b873a3126aa9d0c72bfe42fd0a8509789b581 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 14:11:36 -0300
-Subject: [PATCH 15/15] Exercise the text-output byte bound in the e2e harness
+Subject: [PATCH 15/16] Exercise the text-output byte bound in the e2e harness
 
 The flow-control scenarios flooded 60 short lines, which overran the old
 16-blob window but is only ~2 KB and so now sits comfortably inside the
@@ -3809,6 +3809,339 @@ index f5db25b8..e15dfa95 100755
              await asyncio.sleep(0.1)
      except Exception as exc:  # noqa: BLE001 - report and exit the handler
          print("[k8s-mock] handler ended: %r" % exc, flush=True)
+-- 
+2.54.0
+
+
+From 0ecc5b0cd14de77e5a6ed28d3d39d0f6779427de Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 14:20:38 -0300
+Subject: [PATCH 16/16] Throttle raw text-output instead of aborting on
+ backpressure
+
+Aborting when the outstanding-output window filled was wrong for raw mode.
+Sustained output always outruns a consumer eventually, so the abort was not
+a safety valve for pathological clients -- it fired during ordinary work. A
+live 20,000-line flood over the gateway killed the session at roughly line
+1,200, with the client acking correctly the whole time.
+
+Raw mode now waits for the window to drain before flushing. It renders
+nothing graphically, so pausing the read loop starves no co-attached browser
+user, and the pause propagates backpressure to the remote program through
+the PTY exactly as a slow local terminal would -- which preserves the byte
+stream rather than truncating it. Tee mode still drops, since there the read
+loop is shared with the graphical display.
+
+A consumer that stops acking entirely still cannot hold the session open:
+if the window fails to drain for 15 seconds, the connection is aborted as
+before. The interval is held per-terminal so tests can exercise the give-up
+path without waiting it out.
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ README-text-output.md                         | 18 ++++--
+ src/terminal/terminal.c                       | 63 +++++++++++++++++-
+ src/terminal/terminal/terminal-priv.h         | 27 ++++++++
+ src/terminal/tests/text-output/flow-control.c | 64 +++++++++++++++++++
+ 4 files changed, 165 insertions(+), 7 deletions(-)
+
+diff --git a/README-text-output.md b/README-text-output.md
+index 00e183a0..0120dcee 100644
+--- a/README-text-output.md
++++ b/README-text-output.md
+@@ -63,16 +63,24 @@ outstanding blobs. The byte bound is the operative one: in raw mode every PTY
+ read is flushed as its own blob, so blobs are frequently only a few bytes and a
+ blob-count bound alone would be reached after a trivial amount of output.
+ 
+-What happens on overrun depends on the mode, and the difference is deliberate:
++What happens when the window fills depends on the mode, and the difference is
++deliberate:
+ 
+ * In tee mode, buffered output is **dropped** and the session continues. The tee
+   shares the protocol read loop with the graphical display, so blocking on a
+   stalled text consumer would also stall any co-attached browser user. Delivery
+   is therefore best-effort, and a dropped chunk is logged as a warning.
+-* In raw mode, the connection is **aborted** with `SERVER_ERROR` and the message
+-  `text-output consumer is not keeping up`. The pipe is the session's only output
+-  and is byte-oriented, so failing fast is preferable to handing the client a
+-  silently-truncated stream.
++* In raw mode, the writer **waits** for the consumer to catch up. Raw mode
++  renders nothing graphically, so there is no browser user to starve, and
++  pausing the read loop propagates backpressure to the remote program through
++  the PTY exactly as a slow local terminal would. Sustained output always
++  outruns a consumer eventually, so throttling — not dropping, and not
++  disconnecting — is the only behavior that keeps the byte stream intact.
++
++A consumer that stops acking altogether cannot hold the session open
++indefinitely: if the window fails to drain for 15 seconds, the connection is
++aborted with `SERVER_ERROR` and the message
++`text-output consumer is not keeping up`.
+ 
+ Manual tunnel smoke test
+ ------------------------
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 9197eaf8..ba8f6ceb 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -35,6 +35,7 @@
+ #include <ctype.h>
+ #include <errno.h>
+ #include <pthread.h>
++#include <time.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -617,6 +618,9 @@ guac_terminal* guac_terminal_create(guac_client* client,
+     /* Init terminal lock */
+     pthread_mutex_init(&(term->lock), NULL);
+ 
++    /* Init condition signalling that outstanding text-output has been acked */
++    pthread_cond_init(&(term->text_output_acked), NULL);
++
+     /* Repaint and resize overall display */
+     guac_terminal_repaint_default_layer(term, term->client->socket);
+     guac_terminal_display_resize(term->display,
+@@ -728,6 +732,7 @@ void guac_terminal_free(guac_terminal* term) {
+ 
+     /* Free the terminal itself */
+     pthread_mutex_destroy(&term->lock);
++    pthread_cond_destroy(&term->text_output_acked);
+     guac_mem_free(term);
+ 
+ }
+@@ -3063,6 +3068,9 @@ static int guac_terminal_text_output_ack(guac_user* user, guac_stream* stream,
+ 
+         term->text_output_inflight--;
+ 
++        /* Room may now be available for a writer waiting on the window */
++        pthread_cond_broadcast(&term->text_output_acked);
++
+     }
+ 
+     guac_terminal_unlock(term);
+@@ -3252,6 +3260,50 @@ int guac_terminal_text_output_should_open(int text_output, int disable_copy) {
+     return text_output && !disable_copy;
+ }
+ 
++/**
++ * Waits until the outstanding text-output window has room for another blob, or
++ * until the consumer has made no progress for
++ * GUAC_TERMINAL_TEXT_OUTPUT_STALL_TIMEOUT seconds. The terminal lock must
++ * already be held; it is released while waiting and reacquired before
++ * returning.
++ *
++ * This is used only in raw (headless) mode. Blocking here throttles the
++ * protocol read loop, which in turn applies backpressure to the remote program
++ * through the PTY, preserving the byte stream instead of discarding part of it.
++ * Because raw mode renders nothing graphically, no co-attached browser user can
++ * be starved by the pause.
++ *
++ * @param term
++ *     The terminal whose text-output window should be awaited.
++ */
++static void guac_terminal_text_output_await_window(guac_terminal* term) {
++
++    /* Nothing to wait for if the window already has room */
++    if (term->text_output_inflight < GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT
++            && term->text_output_inflight_bytes + term->text_output_length
++                    <= GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES)
++        return;
++
++    struct timespec deadline;
++    clock_gettime(CLOCK_REALTIME, &deadline);
++    deadline.tv_sec += term->text_output_stall_timeout;
++
++    while (term->text_output_stream != NULL
++            && (term->text_output_inflight
++                    >= GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT
++                || term->text_output_inflight_bytes + term->text_output_length
++                        > GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES)) {
++
++        /* Give up if the consumer has stopped acking entirely. The flush which
++         * follows will then find the window still full and abort. */
++        if (pthread_cond_timedwait(&term->text_output_acked, &term->lock,
++                    &deadline) == ETIMEDOUT)
++            return;
++
++    }
++
++}
++
+ void guac_terminal_text_output_open(guac_terminal* term, const char* name,
+         int flush_immediately) {
+ 
+@@ -3266,6 +3318,7 @@ void guac_terminal_text_output_open(guac_terminal* term, const char* name,
+     term->text_output_inflight = 0;
+     term->text_output_inflight_bytes = 0;
+     term->text_output_inflight_head = 0;
++    term->text_output_stall_timeout = GUAC_TERMINAL_TEXT_OUTPUT_STALL_TIMEOUT;
+     term->text_output_flush_immediately = flush_immediately;
+ 
+     /* Allocate and open the stream on the connection owner's socket, so raw
+@@ -3314,9 +3367,15 @@ void guac_terminal_text_output_write(guac_terminal* term,
+         }
+ 
+         /* In raw (headless) mode there is no graphical frame cycle to flush the
+-         * buffer, so flush immediately as data arrives. */
+-        if (term->text_output_flush_immediately)
++         * buffer, so flush immediately as data arrives. Wait first for room in
++         * the outstanding-output window: raw mode renders nothing graphically,
++         * so no browser user can be starved by pausing here, and pausing
++         * propagates backpressure to the remote program through the PTY exactly
++         * as a slow local terminal would. */
++        if (term->text_output_flush_immediately) {
++            guac_terminal_text_output_await_window(term);
+             guac_terminal_text_output_flush(term);
++        }
+ 
+     }
+ 
+diff --git a/src/terminal/terminal/terminal-priv.h b/src/terminal/terminal/terminal-priv.h
+index 00593bac..b0642451 100644
+--- a/src/terminal/terminal/terminal-priv.h
++++ b/src/terminal/terminal/terminal-priv.h
+@@ -61,6 +61,16 @@
+  */
+ #define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES (256 * 1024)
+ 
++/**
++ * The number of seconds raw (headless) text-output mode will wait for a full
++ * outstanding-output window to drain before concluding that the consumer has
++ * stopped acking altogether and aborting the connection. A consumer that is
++ * merely slow keeps the window moving and is throttled rather than aborted;
++ * this bounds how long a consumer that has silently gone away can hold the
++ * remote session open.
++ */
++#define GUAC_TERMINAL_TEXT_OUTPUT_STALL_TIMEOUT 15
++
+ /**
+  * Handler for characters printed to the terminal. When a character is printed,
+  * the current char handler for the terminal is called and given that
+@@ -239,6 +249,23 @@ struct guac_terminal {
+      */
+     int text_output_inflight_head;
+ 
++    /**
++     * Condition signalled whenever an outstanding text-output blob is
++     * acknowledged, and thus whenever room may have become available within the
++     * outstanding-output window. Used with the terminal lock so that raw mode
++     * can wait for the consumer to catch up rather than discarding output.
++     */
++    pthread_cond_t text_output_acked;
++
++    /**
++     * The number of seconds raw text-output mode will wait for a full
++     * outstanding-output window to drain before aborting the connection,
++     * initialized from GUAC_TERMINAL_TEXT_OUTPUT_STALL_TIMEOUT when the stream
++     * is opened. Held per-terminal so that tests can exercise the give-up path
++     * without waiting the full production interval.
++     */
++    int text_output_stall_timeout;
++
+     /**
+      * Whether buffered text-output should be flushed immediately as it is
+      * written, rather than at terminal frame boundaries. This is required in
+diff --git a/src/terminal/tests/text-output/flow-control.c b/src/terminal/tests/text-output/flow-control.c
+index 9197570e..aecc6c45 100644
+--- a/src/terminal/tests/text-output/flow-control.c
++++ b/src/terminal/tests/text-output/flow-control.c
+@@ -83,6 +83,7 @@ static text_output_fixture* text_output_fixture_alloc(void) {
+     fixture->term = guac_mem_zalloc(sizeof(guac_terminal));
+     fixture->term->client = fixture->client;
+     pthread_mutex_init(&fixture->term->lock, NULL);
++    pthread_cond_init(&fixture->term->text_output_acked, NULL);
+ 
+     return fixture;
+ 
+@@ -92,6 +93,7 @@ static void text_output_fixture_free(text_output_fixture* fixture) {
+ 
+     if (fixture->term != NULL) {
+         guac_terminal_text_output_close(fixture->term);
++        pthread_cond_destroy(&fixture->term->text_output_acked);
+         pthread_mutex_destroy(&fixture->term->lock);
+         guac_mem_free(fixture->term);
+     }
+@@ -285,6 +287,7 @@ void test_text_output__byte_bound_aborts_raw_mode(void) {
+     text_output_fixture* fixture = text_output_fixture_alloc();
+ 
+     guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++    fixture->term->text_output_stall_timeout = 0;
+ 
+     /* Simulate a large outstanding backlog well within the blob-count limit.
+      * Set directly rather than written, as actually sending this volume would
+@@ -328,11 +331,72 @@ void test_text_output__close_marks_stream_unroutable(void) {
+ 
+ }
+ 
++/**
++ * Acks every outstanding text-output blob once, after a short delay, as a
++ * consumer that is keeping up but lagging would.
++ */
++static void* delayed_ack_thread(void* data) {
++
++    text_output_fixture* fixture = (text_output_fixture*) data;
++
++    /* Let the writer reach the full window and block */
++    usleep(100000);
++
++    guac_stream* stream = fixture->term->text_output_stream;
++    while (fixture->term->text_output_inflight > 0)
++        stream->ack_handler(fixture->owner, stream, "OK",
++                GUAC_PROTOCOL_STATUS_SUCCESS);
++
++    return NULL;
++
++}
++
++/**
++ * Regression test: a raw-mode consumer which is merely slow must be throttled,
++ * not disconnected. Sustained output (a large "cat", say) will always outrun a
++ * consumer eventually; aborting in that situation kills healthy sessions, so
++ * the writer waits for the window to drain instead.
++ */
++void test_text_output__raw_mode_throttles_rather_than_aborting(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++
++    /* Present a full window, and a consumer which drains it shortly after */
++    fixture->term->text_output_inflight = GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
++    fixture->term->text_output_inflight_bytes = 4096;
++    for (int i = 0; i < GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT; i++)
++        fixture->term->text_output_inflight_sizes[i] = 16;
++
++    pthread_t acker;
++    pthread_create(&acker, NULL, delayed_ack_thread, fixture);
++
++    guac_terminal_text_output_write(fixture->term, "throttled", 9);
++
++    pthread_join(acker, NULL);
++
++    /* The session must survive, and the data must have been sent rather than
++     * dropped once room became available */
++    CU_ASSERT_EQUAL(fixture->client->state, GUAC_CLIENT_RUNNING);
++    CU_ASSERT_EQUAL(fixture->term->text_output_length, 0);
++
++    guac_terminal_text_output_close(fixture->term);
++    char* instructions = text_output_fixture_read(fixture);
++
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions, "4.blob"));
++
++    guac_mem_free(instructions);
++    text_output_fixture_free(fixture);
++
++}
++
+ void test_text_output__raw_mode_aborts_when_consumer_stalls(void) {
+ 
+     text_output_fixture* fixture = text_output_fixture_alloc();
+ 
+     guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++    fixture->term->text_output_stall_timeout = 0;
+     fixture->term->text_output_inflight = GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
+ 
+     guac_terminal_text_output_write(fixture->term, "abort", 5);
 -- 
 2.54.0
 

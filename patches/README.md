@@ -46,10 +46,13 @@ of decoding rasterized glyphs.
   - `text-output=true` (tee): buffered output is **dropped** and the session continues. Delivery is
     best-effort — output is lost silently rather than blocking the remote PTY/read loop, which would
     also stall co-attached browser users.
-  - `text-output=raw`: the **connection is aborted** with `SERVER_ERROR` and the message
-    `text-output consumer is not keeping up`. Raw mode is the sole output channel and is
-    byte-oriented, so guacd fails fast rather than delivering a silently-corrupted stream. Clients
-    should surface this status distinctly from an ordinary disconnect.
+  - `text-output=raw`: guacd **throttles** the remote read loop until the client catches up,
+    propagating backpressure to the remote program through the PTY. Raw mode renders nothing
+    graphically, so pausing starves no one, and the byte stream stays intact -- sustained output
+    would otherwise always outrun a consumer eventually. A client that stops acking entirely for
+    15 seconds is disconnected with `SERVER_ERROR` and the message
+    `text-output consumer is not keeping up`; clients should surface that status distinctly from
+    an ordinary disconnect.
 - Inbound STDIN already works via the existing `pipe_handler` →
   `src/terminal/terminal-stdin-stream.c`. No new input path.
 

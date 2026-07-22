@@ -7,7 +7,7 @@ that `guacamole-cli` depends on. Patches live here until implemented and (option
 
 | Patch | Status | Tracking issue |
 | --- | --- | --- |
-| `text-output` — opt-in raw-text output modes for terminal protocols | **Implemented** (on `feature/3-text-output-mode`) | [ciroiriarte/guacamole-server#3](https://github.com/ciroiriarte/guacamole-server/issues/3) |
+| [`0001-add-text-output-mode.patch`](0001-add-text-output-mode.patch) — opt-in raw-text output modes for terminal protocols | **Exported + implemented** (on `feature/3-text-output-mode`) | [ciroiriarte/guacamole-server#3](https://github.com/ciroiriarte/guacamole-server/issues/3) |
 
 ---
 
@@ -59,9 +59,19 @@ Same information as already shown graphically, but machine-readable plaintext. M
 1. **Honor `disable-copy`** — it is effectively a copy/exfil channel; block it when copy is disabled.
 2. **Not log/record pipe contents by default** — output may contain echoed secrets/tokens.
 
-### How patches will be stored here
+### Patch artifact
 
-The feature is implemented on the `feature/3-text-output-mode` branch of the server fork; the
-authoritative source is that branch and tracking issue #3. A standalone `*.patch` artifact (e.g.
-`0001-add-text-output-mode.patch`, via `git format-patch`) has **not** been exported here yet — add
-it, with build/apply instructions, if/when a self-contained patch is needed for redistribution.
+The feature is implemented on the `feature/3-text-output-mode` branch of the server fork and is
+exported here as [`0001-add-text-output-mode.patch`](0001-add-text-output-mode.patch). The file is a
+single `git format-patch --stdout` mailbox containing the text-output commit series from the server
+fork.
+
+Apply it to a clean checkout of the pinned guacamole-server base with:
+
+```sh
+git am patches/0001-add-text-output-mode.patch
+```
+
+Build guacd with the normal Apache Guacamole server bootstrap/configure flow for your platform, then
+run the server fork's text-output smoke/manual tests documented in
+`util/manual-tests/README-text-output-e2e.md`.

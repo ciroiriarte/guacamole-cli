@@ -1,0 +1,3216 @@
+From ded81122f770574c104c6289af1f38ce2a5d8dd9 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Mon, 29 Jun 2026 18:20:04 -0300
+Subject: [PATCH 01/11] terminal: add opt-in raw text-output pipe stream
+
+Add a dedicated outbound pipe stream to guac_terminal that tees the raw
+terminal (PTY) byte stream, verbatim, to the client in addition to the
+normal graphical display. This is the core mechanism enabling a native/CLI
+Guacamole client to render SSH/telnet/Kubernetes sessions as true
+in-terminal text instead of decoding rasterized glyphs.
+
+New public API (terminal.h):
+  guac_terminal_text_output_open(term, name)
+  guac_terminal_text_output_write(term, buffer, length)
+  guac_terminal_text_output_flush(term)
+  guac_terminal_text_output_close(term)
+
+The stream is independent of the existing guacctl pipe_stream and does not
+pass through guac_terminal_echo(), so escape/control sequences are
+preserved (the echo path strips them). Bytes are forwarded upstream of the
+terminal emulator's charset decoding, so the stream is charset-agnostic;
+blob payloads are base64-encoded and therefore binary-safe. Opened with
+mimetype application/octet-stream and (by convention) the name STDOUT,
+mirroring the existing inbound STDIN stream.
+
+Thread-safety mirrors the existing pipe machinery: text_output_write()
+acquires the terminal lock; text_output_flush() runs under that lock at
+frame boundaries via guac_terminal_flush(). The stream is initialized in
+guac_terminal_create() and torn down in the terminal free path.
+
+Part of: enable native CLI client (issue #3).
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/terminal.c               | 123 ++++++++++++++++++++++++++
+ src/terminal/terminal/terminal-priv.h |  27 ++++++
+ src/terminal/terminal/terminal.h      |  71 +++++++++++++++
+ 3 files changed, 221 insertions(+)
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 6d6dd5a0..99bf1463 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -607,6 +607,10 @@ guac_terminal* guac_terminal_create(guac_client* client,
+     /* Init pipe stream (output to display by default) */
+     term->pipe_stream = NULL;
+ 
++    /* No text-output pipe stream by default */
++    term->text_output_stream = NULL;
++    term->text_output_length = 0;
++
+     /* No typescript by default */
+     term->typescript = NULL;
+ 
+@@ -699,6 +703,9 @@ void guac_terminal_free(guac_terminal* term) {
+     /* Close and flush any open pipe stream */
+     guac_terminal_pipe_stream_close(term);
+ 
++    /* Close and flush any open text-output pipe stream */
++    guac_terminal_text_output_close(term);
++
+     /* Close and flush any active typescript */
+     guac_terminal_typescript_free(term->typescript);
+ 
+@@ -1544,6 +1551,11 @@ void guac_terminal_flush(guac_terminal* terminal) {
+     if (terminal->pipe_stream_flags & GUAC_TERMINAL_PIPE_AUTOFLUSH)
+         guac_terminal_pipe_stream_flush(terminal);
+ 
++    /* Flush text-output pipe stream, if open, at this frame boundary. The
++     * terminal lock is already held by the caller of guac_terminal_flush(). */
++    if (terminal->text_output_stream != NULL)
++        guac_terminal_text_output_flush(terminal);
++
+     /* Flush display state */
+     guac_terminal_select_redraw(terminal);
+     guac_terminal_commit_cursor(terminal);
+@@ -3009,6 +3021,117 @@ void guac_terminal_pipe_stream_close(guac_terminal* term) {
+ 
+ }
+ 
++void guac_terminal_text_output_open(guac_terminal* term, const char* name) {
++
++    guac_client* client = term->client;
++    guac_socket* socket = client->socket;
++
++    /* Close existing text-output stream, if any */
++    guac_terminal_text_output_close(term);
++
++    guac_terminal_lock(term);
++
++    /* Allocate and assign new text-output stream */
++    term->text_output_stream = guac_client_alloc_stream(client);
++    term->text_output_length = 0;
++
++    /* Open stream as a raw byte stream; it carries the remote PTY output
++     * verbatim (including ANSI/escape sequences). The mimetype is advisory:
++     * blob payloads are base64-encoded and thus binary-safe regardless. */
++    guac_protocol_send_pipe(socket, term->text_output_stream,
++            "application/octet-stream", name);
++
++    guac_terminal_unlock(term);
++
++    /* Log redirect at debug level */
++    guac_client_log(client, GUAC_LOG_DEBUG, "Raw terminal output now teed to "
++            "text-output pipe \"%s\".", name);
++
++}
++
++void guac_terminal_text_output_write(guac_terminal* term,
++        const char* buffer, int length) {
++
++    /* Ignore if no text-output stream is open (fast path, re-checked under
++     * lock below) */
++    if (term->text_output_stream == NULL)
++        return;
++
++    guac_terminal_lock(term);
++
++    /* Append data only if the stream is still open */
++    if (term->text_output_stream != NULL) {
++
++        while (length > 0) {
++
++            /* Flush buffer if no space is available */
++            if (term->text_output_length == sizeof(term->text_output_buffer))
++                guac_terminal_text_output_flush(term);
++
++            /* Append as many bytes as will fit in the buffer */
++            int chunk = sizeof(term->text_output_buffer)
++                    - term->text_output_length;
++            if (chunk > length)
++                chunk = length;
++
++            memcpy(term->text_output_buffer + term->text_output_length,
++                    buffer, chunk);
++
++            term->text_output_length += chunk;
++            buffer += chunk;
++            length -= chunk;
++
++        }
++
++    }
++
++    guac_terminal_unlock(term);
++
++}
++
++void guac_terminal_text_output_flush(guac_terminal* term) {
++
++    guac_client* client = term->client;
++    guac_socket* socket = client->socket;
++    guac_stream* stream = term->text_output_stream;
++
++    /* Write blob if data exists in buffer */
++    if (stream != NULL && term->text_output_length > 0) {
++        guac_protocol_send_blob(socket, stream,
++                term->text_output_buffer, term->text_output_length);
++        term->text_output_length = 0;
++    }
++
++}
++
++void guac_terminal_text_output_close(guac_terminal* term) {
++
++    guac_client* client = term->client;
++    guac_socket* socket = client->socket;
++
++    guac_terminal_lock(term);
++
++    /* Close any existing text-output stream */
++    if (term->text_output_stream != NULL) {
++
++        /* Flush remaining buffered data and write end of stream */
++        guac_terminal_text_output_flush(term);
++        guac_protocol_send_end(socket, term->text_output_stream);
++
++        /* Destroy stream */
++        guac_client_free_stream(client, term->text_output_stream);
++        term->text_output_stream = NULL;
++
++        /* Log closure at debug level */
++        guac_client_log(client, GUAC_LOG_DEBUG,
++                "Text-output pipe stream closed.");
++
++    }
++
++    guac_terminal_unlock(term);
++
++}
++
+ int guac_terminal_create_typescript(guac_terminal* term, const char* path,
+         const char* name, int create_path, int allow_write_existing) {
+ 
+diff --git a/src/terminal/terminal/terminal-priv.h b/src/terminal/terminal/terminal-priv.h
+index e927c14b..5c7d1a5c 100644
+--- a/src/terminal/terminal/terminal-priv.h
++++ b/src/terminal/terminal/terminal-priv.h
+@@ -146,6 +146,33 @@ struct guac_terminal {
+      */
+     int pipe_buffer_length;
+ 
++    /**
++     * The currently-open outbound "text-output" pipe stream, to which the raw
++     * byte stream received from the remote terminal (PTY) is teed when
++     * text-output mode is enabled, or NULL if text-output mode is disabled.
++     *
++     * Unlike pipe_stream (used by the in-band guacctl redirection mechanism),
++     * this stream carries the unmodified remote byte stream, including
++     * ANSI/escape sequences, and operates in addition to the normal terminal
++     * display without altering rendering. It is fed directly from each
++     * protocol's PTY read loop, upstream of the terminal emulator, so it is
++     * also charset-agnostic (the exact bytes are forwarded to the client).
++     */
++    guac_stream* text_output_stream;
++
++    /**
++     * Buffer of raw terminal bytes pending write to text_output_stream. Data
++     * within this buffer will be flushed when either (1) the buffer is full
++     * and more data needs to be written, (2) a frame boundary is reached (via
++     * guac_terminal_flush()), or (3) the text-output stream is closed.
++     */
++    char text_output_buffer[6048];
++
++    /**
++     * The number of bytes currently stored within text_output_buffer.
++     */
++    int text_output_length;
++
+     /**
+      * The currently-active typescript recording all terminal output, or NULL
+      * if no typescript is being used for the terminal session.
+diff --git a/src/terminal/terminal/terminal.h b/src/terminal/terminal/terminal.h
+index d1a0bae6..29ab0f61 100644
+--- a/src/terminal/terminal/terminal.h
++++ b/src/terminal/terminal/terminal.h
+@@ -1018,6 +1018,77 @@ int guac_terminal_send_string(guac_terminal* term, const char* data);
+  */
+ int guac_terminal_write(guac_terminal* term, const char* buffer, int length);
+ 
++/**
++ * Opens a new outbound "text-output" pipe stream associated with the given
++ * terminal. Once open, the raw byte stream received from the remote terminal
++ * may be teed to this stream via guac_terminal_text_output_write(), in
++ * addition to (and without affecting) the normal terminal display.
++ *
++ * Unlike the guacctl pipe stream opened by guac_terminal_pipe_stream_open(),
++ * this stream carries the unmodified remote byte stream verbatim, including
++ * ANSI/escape sequences, and does not alter rendering. It is intended to back
++ * a native/CLI Guacamole client that presents the session as true in-terminal
++ * text. If a text-output stream is already open, it will be closed first.
++ *
++ * @param term
++ *     The terminal for which the text-output pipe stream should be opened.
++ *
++ * @param name
++ *     The name of the pipe stream to open (e.g. "STDOUT").
++ */
++void guac_terminal_text_output_open(guac_terminal* term, const char* name);
++
++/**
++ * Writes a block of raw bytes to the text-output pipe stream currently open
++ * and associated with the given terminal. The text-output stream must already
++ * have been opened via guac_terminal_text_output_open(). If no text-output
++ * stream is open, this function has no effect. Data written through this
++ * function may be buffered, and will be flushed automatically at frame
++ * boundaries or when the internal buffer is full.
++ *
++ * This function is thread-safe: it acquires the terminal lock internally and
++ * may safely be called from a protocol's PTY read loop concurrently with
++ * frame rendering.
++ *
++ * @param term
++ *     The terminal whose currently-open text-output pipe stream should be
++ *     written to.
++ *
++ * @param buffer
++ *     A buffer containing the raw bytes to write to the text-output stream.
++ *
++ * @param length
++ *     The number of bytes within the given buffer to write.
++ */
++void guac_terminal_text_output_write(guac_terminal* term,
++        const char* buffer, int length);
++
++/**
++ * Flushes any data currently buffered for the currently-open text-output pipe
++ * stream associated with the given terminal. If no text-output stream is open
++ * or no data is buffered, this function has no effect.
++ *
++ * The caller MUST hold the terminal lock, or otherwise guarantee that no
++ * other thread is concurrently accessing the terminal (as is the case during
++ * single-threaded teardown). This function is invoked internally at frame
++ * boundaries by guac_terminal_flush().
++ *
++ * @param term
++ *     The terminal whose text-output stream buffer should be flushed.
++ */
++void guac_terminal_text_output_flush(guac_terminal* term);
++
++/**
++ * Closes the currently-open text-output pipe stream associated with the given
++ * terminal. Any data currently buffered will be flushed prior to closure. If
++ * no text-output stream is open, this function has no effect.
++ *
++ * @param term
++ *     The terminal whose currently-open text-output pipe stream should be
++ *     closed.
++ */
++void guac_terminal_text_output_close(guac_terminal* term);
++
+ /**
+  * Initializes the handlers of the given guac_stream such that it serves as the
+  * source of input to the terminal. Other input sources will be temporarily
+-- 
+2.54.0
+
+
+From bf73d3881a3beb05a7099e22a7e8b5df6b3dea1c Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Mon, 29 Jun 2026 18:20:04 -0300
+Subject: [PATCH 02/11] ssh: add opt-in "text-output" parameter
+
+Wire the new text-output mode into the SSH protocol. Adds the boolean
+"text-output" connection parameter (default false). When enabled, the raw
+PTY byte stream read from the SSH channel is teed, verbatim, to an outbound
+STDOUT pipe stream in addition to the graphical display.
+
+Gated behind "disable-copy": text-output is effectively a copy/exfiltration
+channel, so when copying is disabled the pipe is not opened and a warning is
+logged. Teardown is automatic via the terminal free path.
+
+Part of: enable native CLI client (issue #3).
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/protocols/ssh/settings.c | 20 ++++++++++++++++++--
+ src/protocols/ssh/settings.h |  9 +++++++++
+ src/protocols/ssh/ssh.c      | 19 +++++++++++++++++++
+ 3 files changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/src/protocols/ssh/settings.c b/src/protocols/ssh/settings.c
+index 65c7347c..73f2fe7a 100644
+--- a/src/protocols/ssh/settings.c
++++ b/src/protocols/ssh/settings.c
+@@ -79,6 +79,7 @@ const char* GUAC_SSH_CLIENT_ARGS[] = {
+     "clipboard-buffer-size",
+     "disable-copy",
+     "disable-paste",
++    "text-output",
+     "wol-send-packet",
+     "wol-mac-addr",
+     "wol-broadcast-addr",
+@@ -348,7 +349,17 @@ enum SSH_ARGS_IDX {
+      * the clipboard. By default, clipboard access is not blocked.
+      */
+     IDX_DISABLE_PASTE,
+-    
++
++    /**
++     * Whether the raw terminal (PTY) byte stream should be teed, verbatim, to
++     * an outbound "STDOUT" pipe stream in addition to the normal graphical
++     * display. This enables a native/CLI Guacamole client to render the
++     * session as true in-terminal text. If set to "true", text-output mode is
++     * enabled; by default it is disabled. Honored only when copying from the
++     * terminal is not disabled (see IDX_DISABLE_COPY).
++     */
++    IDX_TEXT_OUTPUT,
++
+     /**
+      * Whether the magic WoL packet should be sent prior to starting the
+      * connection.  If set to "true", the system will attempt to send the WoL
+@@ -620,7 +631,12 @@ guac_ssh_settings* guac_ssh_parse_args(guac_user* user,
+     settings->disable_paste =
+         guac_user_parse_args_boolean(user, GUAC_SSH_CLIENT_ARGS, argv,
+                 IDX_DISABLE_PASTE, false);
+-    
++
++    /* Parse raw text-output mode flag */
++    settings->text_output =
++        guac_user_parse_args_boolean(user, GUAC_SSH_CLIENT_ARGS, argv,
++                IDX_TEXT_OUTPUT, false);
++
+     /* Parse Wake-on-LAN (WoL) parameters. */
+     settings->wol_send_packet =
+         guac_user_parse_args_boolean(user, GUAC_SSH_CLIENT_ARGS, argv,
+diff --git a/src/protocols/ssh/settings.h b/src/protocols/ssh/settings.h
+index ccb33f6f..b738c880 100644
+--- a/src/protocols/ssh/settings.h
++++ b/src/protocols/ssh/settings.h
+@@ -180,6 +180,15 @@ typedef struct guac_ssh_settings {
+      */
+     bool disable_paste;
+ 
++    /**
++     * Whether raw text-output mode is enabled. If set, the raw terminal (PTY)
++     * byte stream is teed, verbatim, to an outbound "STDOUT" pipe stream in
++     * addition to the normal graphical display, enabling a native/CLI client
++     * to render the session as true in-terminal text. Honored only when
++     * disable_copy is not set, as text-output is effectively a copy channel.
++     */
++    bool text_output;
++
+     /**
+      * Whether SFTP is enabled.
+      */
+diff --git a/src/protocols/ssh/ssh.c b/src/protocols/ssh/ssh.c
+index 95a62141..af3b68c5 100644
+--- a/src/protocols/ssh/ssh.c
++++ b/src/protocols/ssh/ssh.c
+@@ -343,6 +343,20 @@ void* ssh_client_thread(void* data) {
+                 settings->typescript_write_existing);
+     }
+ 
++    /* Enable raw text-output mode, if requested. This tees the raw terminal
++     * (PTY) byte stream to an outbound "STDOUT" pipe for native/CLI clients,
++     * in addition to the normal graphical display. As text-output is
++     * effectively a copy/exfiltration channel, it is gated behind
++     * disable-copy. */
++    if (settings->text_output) {
++        if (settings->disable_copy)
++            guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
++                    "requested but is being ignored because copying from the "
++                    "terminal is disabled (\"disable-copy\").");
++        else
++            guac_terminal_text_output_open(ssh_client->term, "STDOUT");
++    }
++
+     /* Get user and credentials */
+     ssh_client->user = guac_ssh_get_user(client);
+     if (ssh_client->user == NULL) {
+@@ -544,6 +558,11 @@ void* ssh_client_thread(void* data) {
+ 
+         /* Attempt to write data received. Exit on failure. */
+         if (bytes_read > 0) {
++
++            /* Tee the raw PTY byte stream to the text-output pipe, if enabled.
++             * Has no effect unless text-output mode opened the pipe. */
++            guac_terminal_text_output_write(ssh_client->term, buffer, bytes_read);
++
+             int written = guac_terminal_write(ssh_client->term, buffer, bytes_read);
+             if (written < 0)
+                 break;
+-- 
+2.54.0
+
+
+From 937fd5eac68c8836e4b9ef0cada0a9bac6e146b1 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Mon, 29 Jun 2026 18:20:04 -0300
+Subject: [PATCH 03/11] telnet: add opt-in "text-output" parameter
+
+Wire text-output mode into the telnet protocol. Adds the boolean
+"text-output" parameter (default false); when enabled, the remote byte
+stream delivered via TELNET_EV_DATA is teed, verbatim, to an outbound
+STDOUT pipe stream in addition to the graphical display. Local input echo
+is intentionally not teed (the client handles its own echo). Gated behind
+"disable-copy".
+
+Part of: enable native CLI client (issue #3).
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/protocols/telnet/settings.c | 20 ++++++++++++++++++--
+ src/protocols/telnet/settings.h |  9 +++++++++
+ src/protocols/telnet/telnet.c   | 17 +++++++++++++++++
+ 3 files changed, 44 insertions(+), 2 deletions(-)
+
+diff --git a/src/protocols/telnet/settings.c b/src/protocols/telnet/settings.c
+index 7afa9b9d..a2f586dc 100644
+--- a/src/protocols/telnet/settings.c
++++ b/src/protocols/telnet/settings.c
+@@ -69,6 +69,7 @@ const char* GUAC_TELNET_CLIENT_ARGS[] = {
+     "clipboard-buffer-size",
+     "disable-copy",
+     "disable-paste",
++    "text-output",
+     "wol-send-packet",
+     "wol-mac-addr",
+     "wol-broadcast-addr",
+@@ -286,7 +287,17 @@ enum TELNET_ARGS_IDX {
+      * the clipboard. By default, clipboard access is not blocked.
+      */
+     IDX_DISABLE_PASTE,
+-    
++
++    /**
++     * Whether the raw terminal (PTY) byte stream should be teed, verbatim, to
++     * an outbound "STDOUT" pipe stream in addition to the normal graphical
++     * display. This enables a native/CLI Guacamole client to render the
++     * session as true in-terminal text. If set to "true", text-output mode is
++     * enabled; by default it is disabled. Honored only when copying from the
++     * terminal is not disabled (see IDX_DISABLE_COPY).
++     */
++    IDX_TEXT_OUTPUT,
++
+     /**
+      * Whether to send the magic Wake-on-LAN (WoL) packet.  If set to "true"
+      * the WoL packet will be sent prior to attempting to connect to the remote
+@@ -585,7 +596,12 @@ guac_telnet_settings* guac_telnet_parse_args(guac_user* user,
+     settings->disable_paste =
+         guac_user_parse_args_boolean(user, GUAC_TELNET_CLIENT_ARGS, argv,
+                 IDX_DISABLE_PASTE, false);
+-    
++
++    /* Parse raw text-output mode flag */
++    settings->text_output =
++        guac_user_parse_args_boolean(user, GUAC_TELNET_CLIENT_ARGS, argv,
++                IDX_TEXT_OUTPUT, false);
++
+     /* Parse Wake-on-LAN (WoL) settings */
+     settings->wol_send_packet =
+         guac_user_parse_args_boolean(user, GUAC_TELNET_CLIENT_ARGS, argv,
+diff --git a/src/protocols/telnet/settings.h b/src/protocols/telnet/settings.h
+index e1be989c..2dc7a11c 100644
+--- a/src/protocols/telnet/settings.h
++++ b/src/protocols/telnet/settings.h
+@@ -188,6 +188,15 @@ typedef struct guac_telnet_settings {
+      */
+     bool disable_paste;
+ 
++    /**
++     * Whether raw text-output mode is enabled. If set, the raw terminal (PTY)
++     * byte stream is teed, verbatim, to an outbound "STDOUT" pipe stream in
++     * addition to the normal graphical display, enabling a native/CLI client
++     * to render the session as true in-terminal text. Honored only when
++     * disable_copy is not set, as text-output is effectively a copy channel.
++     */
++    bool text_output;
++
+     /**
+      * The path in which the typescript should be saved, if enabled. If no
+      * typescript should be saved, this will be NULL.
+diff --git a/src/protocols/telnet/telnet.c b/src/protocols/telnet/telnet.c
+index 24e489cb..d8b6c3d4 100644
+--- a/src/protocols/telnet/telnet.c
++++ b/src/protocols/telnet/telnet.c
+@@ -280,6 +280,9 @@ static void __guac_telnet_event_handler(telnet_t* telnet, telnet_event_t* event,
+ 
+         /* Terminal output received */
+         case TELNET_EV_DATA:
++            /* Tee the raw remote byte stream to the text-output pipe, if
++             * enabled. Has no effect unless text-output mode opened the pipe. */
++            guac_terminal_text_output_write(telnet_client->term, event->data.buffer, event->data.size);
+             guac_terminal_write(telnet_client->term, event->data.buffer, event->data.size);
+             guac_telnet_search(client, event->data.buffer, event->data.size);
+             break;
+@@ -605,6 +608,20 @@ void* guac_telnet_client_thread(void* data) {
+                 settings->typescript_write_existing);
+     }
+ 
++    /* Enable raw text-output mode, if requested. This tees the raw terminal
++     * (PTY) byte stream to an outbound "STDOUT" pipe for native/CLI clients,
++     * in addition to the normal graphical display. As text-output is
++     * effectively a copy/exfiltration channel, it is gated behind
++     * disable-copy. */
++    if (settings->text_output) {
++        if (settings->disable_copy)
++            guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
++                    "requested but is being ignored because copying from the "
++                    "terminal is disabled (\"disable-copy\").");
++        else
++            guac_terminal_text_output_open(telnet_client->term, "STDOUT");
++    }
++
+     /* Open telnet session */
+     telnet_client->telnet = __guac_telnet_create_session(client);
+     if (telnet_client->telnet == NULL) {
+-- 
+2.54.0
+
+
+From 3fe46c0b01e4a4e47ef8dddee36c2f12d2e76d57 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Mon, 29 Jun 2026 18:20:04 -0300
+Subject: [PATCH 04/11] kubernetes: add opt-in "text-output" parameter
+
+Wire text-output mode into the Kubernetes protocol. Adds the boolean
+"text-output" parameter (default false); when enabled, the remote bytes
+received on the STDOUT and STDERR channels (merged, as the exec session
+runs with a TTY) are teed, verbatim, to an outbound STDOUT pipe stream in
+addition to the graphical display. Gated behind "disable-copy".
+
+Part of: enable native CLI client (issue #3).
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/protocols/kubernetes/io.c         |  3 +++
+ src/protocols/kubernetes/kubernetes.c | 14 ++++++++++++++
+ src/protocols/kubernetes/settings.c   | 15 +++++++++++++++
+ src/protocols/kubernetes/settings.h   |  9 +++++++++
+ 4 files changed, 41 insertions(+)
+
+diff --git a/src/protocols/kubernetes/io.c b/src/protocols/kubernetes/io.c
+index d00e24aa..c167920e 100644
+--- a/src/protocols/kubernetes/io.c
++++ b/src/protocols/kubernetes/io.c
+@@ -42,6 +42,9 @@ void guac_kubernetes_receive_data(guac_client* client,
+         /* Write STDOUT / STDERR directly to terminal as output */
+         case GUAC_KUBERNETES_CHANNEL_STDOUT:
+         case GUAC_KUBERNETES_CHANNEL_STDERR:
++            /* Tee the raw remote byte stream to the text-output pipe, if
++             * enabled. Has no effect unless text-output mode opened the pipe. */
++            guac_terminal_text_output_write(kubernetes_client->term, buffer, length);
+             guac_terminal_write(kubernetes_client->term, buffer, length);
+             break;
+ 
+diff --git a/src/protocols/kubernetes/kubernetes.c b/src/protocols/kubernetes/kubernetes.c
+index ba6f90ac..27757f13 100644
+--- a/src/protocols/kubernetes/kubernetes.c
++++ b/src/protocols/kubernetes/kubernetes.c
+@@ -316,6 +316,20 @@ void* guac_kubernetes_client_thread(void* data) {
+                 settings->typescript_write_existing);
+     }
+ 
++    /* Enable raw text-output mode, if requested. This tees the raw terminal
++     * (PTY) byte stream to an outbound "STDOUT" pipe for native/CLI clients,
++     * in addition to the normal graphical display. As text-output is
++     * effectively a copy/exfiltration channel, it is gated behind
++     * disable-copy. */
++    if (settings->text_output) {
++        if (settings->disable_copy)
++            guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
++                    "requested but is being ignored because copying from the "
++                    "terminal is disabled (\"disable-copy\").");
++        else
++            guac_terminal_text_output_open(kubernetes_client->term, "STDOUT");
++    }
++
+     /* Init libwebsockets context creation parameters */
+     struct lws_context_creation_info context_info = {
+         .port = CONTEXT_PORT_NO_LISTEN, /* We are not a WebSocket server */
+diff --git a/src/protocols/kubernetes/settings.c b/src/protocols/kubernetes/settings.c
+index 2b39da4f..e18a7b9b 100644
+--- a/src/protocols/kubernetes/settings.c
++++ b/src/protocols/kubernetes/settings.c
+@@ -63,6 +63,7 @@ const char* GUAC_KUBERNETES_CLIENT_ARGS[] = {
+     "disable-copy",
+     "disable-paste",
+     "terminal-type",
++    "text-output",
+     NULL
+ };
+ 
+@@ -287,6 +288,16 @@ enum KUBERNETES_ARGS_IDX {
+      */
+     IDX_TERMINAL_TYPE,
+ 
++    /**
++     * Whether the raw terminal (PTY) byte stream should be teed, verbatim, to
++     * an outbound "STDOUT" pipe stream in addition to the normal graphical
++     * display. This enables a native/CLI Guacamole client to render the
++     * session as true in-terminal text. If set to "true", text-output mode is
++     * enabled; by default it is disabled. Honored only when copying from the
++     * terminal is not disabled (see IDX_DISABLE_COPY).
++     */
++    IDX_TEXT_OUTPUT,
++
+     KUBERNETES_ARGS_COUNT
+ };
+ 
+@@ -495,6 +506,10 @@ guac_kubernetes_settings* guac_kubernetes_parse_args(guac_user* user,
+     settings->terminal_type =
+         guac_user_parse_args_string(user, GUAC_KUBERNETES_CLIENT_ARGS, argv,
+                 IDX_TERMINAL_TYPE, "linux");
++    /* Parse raw text-output mode flag */
++    settings->text_output =
++        guac_user_parse_args_boolean(user, GUAC_KUBERNETES_CLIENT_ARGS, argv,
++                IDX_TEXT_OUTPUT, false);
+ 
+     /* Parsing was successful */
+     return settings;
+diff --git a/src/protocols/kubernetes/settings.h b/src/protocols/kubernetes/settings.h
+index fed7f584..428e2d97 100644
+--- a/src/protocols/kubernetes/settings.h
++++ b/src/protocols/kubernetes/settings.h
+@@ -185,6 +185,15 @@ typedef struct guac_kubernetes_settings {
+      */
+     bool disable_paste;
+ 
++    /**
++     * Whether raw text-output mode is enabled. If set, the raw terminal (PTY)
++     * byte stream is teed, verbatim, to an outbound "STDOUT" pipe stream in
++     * addition to the normal graphical display, enabling a native/CLI client
++     * to render the session as true in-terminal text. Honored only when
++     * disable_copy is not set, as text-output is effectively a copy channel.
++     */
++    bool text_output;
++
+     /**
+      * The path in which the typescript should be saved, if enabled. If no
+      * typescript should be saved, this will be NULL.
+-- 
+2.54.0
+
+
+From eacdae58322631f262a73f65f7bff145df90b002 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Sat, 4 Jul 2026 11:37:13 -0300
+Subject: [PATCH 05/11] docs: add text-output smoke test
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ Makefile.am                                   |   5 +-
+ README-text-output.md                         | 138 ++++++++++
+ util/manual-tests/text-output-tunnel-smoke.py | 255 ++++++++++++++++++
+ 3 files changed, 396 insertions(+), 2 deletions(-)
+ create mode 100644 README-text-output.md
+ create mode 100755 util/manual-tests/text-output-tunnel-smoke.py
+
+diff --git a/Makefile.am b/Makefile.am
+index 6ce3814a..b88763a2 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -95,9 +95,10 @@ EXTRA_DIST =                         \
+     Dockerfile                       \
+     LICENSE                          \
+     NOTICE                           \
++    README-text-output.md            \
+     bin/guacctl                      \
+     doc/libguac/Doxyfile.in          \
+     doc/libguac-terminal/Doxyfile.in \
+     src/guacd-docker                 \
+-    util/generate-test-runner.pl
+-
++    util/generate-test-runner.pl      \
++    util/manual-tests/text-output-tunnel-smoke.py
+diff --git a/README-text-output.md b/README-text-output.md
+new file mode 100644
+index 00000000..c326fa1c
+--- /dev/null
++++ b/README-text-output.md
+@@ -0,0 +1,138 @@
++Terminal text-output mode
++=========================
++
++This branch adds an opt-in terminal connection parameter named
++`text-output` for SSH, telnet, and Kubernetes connections.
++
++When `text-output` is set to `true`, guacd tees the raw bytes received from the
++remote terminal/PTY to an outbound Guacamole pipe stream named `STDOUT` while
++continuing to render the normal graphical terminal display. Clients can consume
++that pipe to implement CLI-style access to terminal sessions without scraping
++pixels from the display.
++
++Supported protocols
++-------------------
++
++* SSH: `text-output=true`
++* Telnet: `text-output=true`
++* Kubernetes: `text-output=true`
++
++The parameter is intentionally opt-in. Existing connections continue to behave
++normally unless the parameter is explicitly enabled.
++
++Security and clipboard/copy behavior
++------------------------------------
++
++The `STDOUT` pipe exposes the raw terminal byte stream to the Guacamole client.
++This is effectively a copy/export channel. For that reason, the implementation
++honors the existing copy restriction used by terminal protocols:
++
++* If copy/clipboard output is disabled for the connection, `text-output` is not
++  opened.
++* If copy/clipboard output is allowed and `text-output=true`, guacd opens the
++  `STDOUT` pipe and writes raw terminal bytes to it.
++
++Manual tunnel smoke test
++------------------------
++
++A reusable manual smoke test is provided at:
++
++    util/manual-tests/text-output-tunnel-smoke.py
++
++It validates the full client-facing path:
++
++1. authenticate to the Guacamole REST API;
++2. open a connection through `/websocket-tunnel`;
++3. verify that guacd opens the outbound `STDOUT` pipe;
++4. type a harmless `printf` command through Guacamole keyboard instructions;
++5. verify that the command output returns through the `STDOUT` pipe.
++
++The script requires the Python `websocket-client` package:
++
++    python3 -m pip install websocket-client
++
++Example against the local test deployment used during development:
++
++    util/manual-tests/text-output-tunnel-smoke.py \
++        --url http://10.2.0.186:8080/guacamole \
++        --username guacadmin \
++        --password guacadmin \
++        --data-source postgresql \
++        --connection-id 1
++
++The same values can also be provided with environment variables:
++
++    GUAC_URL=http://10.2.0.186:8080/guacamole \
++    GUAC_USERNAME=guacadmin \
++    GUAC_PASSWORD=guacadmin \
++    GUAC_CONNECTION_ID=1 \
++        util/manual-tests/text-output-tunnel-smoke.py
++
++The command exits with status 0 and prints:
++
++    RESULT: tunnel STDOUT pipe smoke test passed
++
++when the `STDOUT` pipe is present and the marker emitted by the remote shell is
++received through that pipe.
++
++For protocol-specific smoke checks where the backend target is intentionally
++minimal or unreachable, `--pipe-only` can be used to validate that guacd opens
++the protocol's `STDOUT` pipe without requiring an interactive shell command to
++complete:
++
++    util/manual-tests/text-output-tunnel-smoke.py \
++        --url http://10.2.0.186:8080/guacamole \
++        --username guacadmin \
++        --password guacadmin \
++        --data-source postgresql \
++        --connection-id 2 \
++        --pipe-only
++
++For shell prompts that are not the default `$ `, use `--prompt` to select the
++bytes the smoke test should wait for before typing the marker command. For
++example, BusyBox `/bin/sh` inside Kubernetes commonly prompts with `# `:
++
++    util/manual-tests/text-output-tunnel-smoke.py \
++        --url http://10.2.0.186:8080/guacamole \
++        --username guacadmin \
++        --password guacadmin \
++        --data-source postgresql \
++        --connection-id 3 \
++        --prompt '# '
++
++Development validation snapshot
++-------------------------------
++
++The SSH implementation was validated end-to-end on July 4, 2026 against a test
++Guacamole stack:
++
++* Guacamole web application 1.6.0 on Tomcat 9
++* patched guacd from this branch
++* PostgreSQL authentication/connection store
++* connection `1`: `SSH text-output (localhost)` with `text-output=true`
++
++Validation performed:
++
++* REST login returned a valid token.
++* `GET /api/session/data/postgresql/connections` listed the SSH test
++  connection.
++* `/websocket-tunnel` opened successfully for the connection.
++* The tunnel advertised `PIPE stream=1 mimetype=application/octet-stream
++  name=STDOUT`.
++* A harmless `printf` marker command was sent through the Guacamole keyboard
++  protocol and the marker was received through the `STDOUT` pipe.
++
++Additional protocol validation was performed against real Telnet and
++Kubernetes targets on a clean openSUSE Leap 16.0 VM (`10.2.0.190`) provisioned
++from the CI template on VLAN 100:
++
++* Telnet: Guacamole connection `2` targeted a `socat` TCP listener backed by a
++  real PTY shell on port `2323`; the marker
++  `GUAC_TELNET_OUTPUT_SMOKE_OK_20260704` round-tripped through `STDOUT`.
++* Kubernetes: Guacamole connection `3` targeted a single-node k3s cluster and
++  executed `/bin/sh` in pod `default/guac-smoke`; the marker
++  `GUAC_K8S_OUTPUT_SMOKE_OK_20260704` round-tripped through `STDOUT`.
++* Clean VM build/check: the branch built successfully on openSUSE Leap 16.0
++  with SSH, Kubernetes, guacd, and CUnit tests enabled. Telnet was not built on
++  that VM because Leap 16.0 did not provide `libtelnet-devel`; Telnet runtime
++  validation used the deployed patched guacd.
+diff --git a/util/manual-tests/text-output-tunnel-smoke.py b/util/manual-tests/text-output-tunnel-smoke.py
+new file mode 100755
+index 00000000..b49d1c63
+--- /dev/null
++++ b/util/manual-tests/text-output-tunnel-smoke.py
+@@ -0,0 +1,255 @@
++#!/usr/bin/env python3
++"""
++Manual smoke test for Guacamole terminal text-output mode.
++
++This test logs into a Guacamole web application, opens a connection through the
++WebSocket tunnel, and verifies that the server opens the expected outbound
++STDOUT pipe. By default, the test then sends a harmless printf command through
++the Guacamole keyboard protocol and verifies that the command output is
++received through that STDOUT pipe. For non-interactive or intentionally
++unreachable validation targets, --pipe-only can be used to stop after the pipe
++is observed.
++
++The script requires the third-party "websocket-client" Python package.
++"""
++
++import argparse
++import base64
++import json
++import os
++import sys
++import time
++import urllib.parse
++import urllib.request
++
++try:
++    import websocket
++except ImportError as exc:  # pragma: no cover - manual dependency check
++    raise SystemExit(
++        'Missing dependency: install the "websocket-client" Python package.'
++    ) from exc
++
++
++def guac_instruction(opcode, *args):
++    """Return a Guacamole protocol instruction."""
++
++    elements = (opcode,) + tuple(str(arg) for arg in args)
++    return ','.join(f'{len(element)}.{element}' for element in elements) + ';'
++
++
++def parse_guac_instructions(data):
++    """Yield parsed Guacamole protocol instructions from the given message."""
++
++    index = 0
++    length = len(data)
++
++    while index < length:
++        instruction = []
++
++        while True:
++            dot = data.find('.', index)
++            if dot < 0:
++                raise ValueError('Incomplete Guacamole instruction element.')
++
++            element_length = int(data[index:dot])
++            start = dot + 1
++            end = start + element_length
++            instruction.append(data[start:end])
++
++            separator = data[end]
++            index = end + 1
++
++            if separator == ';':
++                yield instruction
++                break
++
++            if separator != ',':
++                raise ValueError(f'Unexpected Guacamole separator: {separator!r}')
++
++
++def rest_json(url, data=None):
++    """Submit an HTTP request and parse the JSON response."""
++
++    with urllib.request.urlopen(url, data=data, timeout=10) as response:
++        return json.load(response)
++
++
++def login(base_url, username, password):
++    """Authenticate via REST and return the auth token."""
++
++    data = urllib.parse.urlencode({
++        'username': username,
++        'password': password,
++    }).encode('utf-8')
++
++    return rest_json(f'{base_url}/api/tokens', data=data)['authToken']
++
++
++def send_text_as_keys(ws, text, delay):
++    """Send text through Guacamole's keyboard protocol."""
++
++    for char in text:
++        keysym = 0xFF0D if char == '\n' else ord(char)
++        ws.send(guac_instruction('key', keysym, 1))
++        ws.send(guac_instruction('key', keysym, 0))
++        if delay:
++            time.sleep(delay)
++
++
++def run_smoke_test(args):
++    base_url = args.url.rstrip('/')
++
++    if base_url.startswith('https://'):
++        ws_base_url = 'wss://' + base_url[len('https://'):]
++    elif base_url.startswith('http://'):
++        ws_base_url = 'ws://' + base_url[len('http://'):]
++    else:
++        raise SystemExit('URL must begin with http:// or https://')
++
++    token = login(base_url, args.username, args.password)
++
++    tunnel_params = urllib.parse.urlencode({
++        'token': token,
++        'GUAC_DATA_SOURCE': args.data_source,
++        'GUAC_ID': args.connection_id,
++        'GUAC_TYPE': 'c',
++    })
++
++    tunnel_url = f'{ws_base_url}/websocket-tunnel?{tunnel_params}'
++    origin = urllib.parse.urlsplit(base_url)._replace(path='', query='', fragment='').geturl()
++
++    print(f'Opening connection {args.connection_id!r} via {base_url} ...')
++    ws = websocket.create_connection(tunnel_url, timeout=args.connect_timeout,
++                                     origin=origin)
++    ws.settimeout(args.receive_timeout)
++
++    streams = {}
++    stdout = bytearray()
++    command_sent = False
++    command = args.command or f"printf '\\n{args.marker}\\n'"
++    start = time.time()
++
++    try:
++        while time.time() - start < args.timeout:
++            try:
++                message = ws.recv()
++            except TimeoutError:
++                continue
++            except websocket.WebSocketTimeoutException:
++                continue
++
++            for instruction in parse_guac_instructions(message):
++                opcode = instruction[0]
++
++                if opcode == 'pipe' and len(instruction) >= 4:
++                    stream_index = instruction[1]
++                    mimetype = instruction[2]
++                    name = instruction[3]
++                    streams[stream_index] = name
++                    print(f'PIPE stream={stream_index} mimetype={mimetype} name={name}')
++
++                elif opcode == 'blob' and len(instruction) >= 3:
++                    stream_index = instruction[1]
++                    if streams.get(stream_index) == args.pipe_name:
++                        stdout.extend(base64.b64decode(instruction[2]))
++                        ws.send(guac_instruction('ack', stream_index, 'OK', 0))
++
++                elif opcode == 'end' and len(instruction) >= 2:
++                    stream_index = instruction[1]
++                    if streams.get(stream_index) == args.pipe_name:
++                        ws.send(guac_instruction('ack', stream_index, 'OK', 0))
++
++                elif opcode == 'sync' and len(instruction) >= 2:
++                    ws.send(guac_instruction('sync', instruction[1]))
++
++            if args.pipe_name in streams.values() and args.pipe_only:
++                print('RESULT: tunnel STDOUT pipe opened')
++                return 0
++
++            if args.pipe_name in streams.values() and not command_sent:
++                prompt = args.prompt.encode('utf-8')
++                if prompt and prompt not in stdout:
++                    continue
++                send_text_as_keys(ws, command + '\n', args.key_delay)
++                command_sent = True
++
++            marker = args.marker.encode('utf-8')
++            if b'\n' + marker in stdout or b'\r\n' + marker in stdout:
++                text = stdout.decode('utf-8', errors='replace')
++                print(f'STDOUT bytes: {len(stdout)}')
++                print('STDOUT tail:')
++                print(text[-args.tail_bytes:])
++                print('RESULT: tunnel STDOUT pipe smoke test passed')
++                return 0
++
++    finally:
++        ws.close()
++
++    text = stdout.decode('utf-8', errors='replace')
++    print(f'STDOUT bytes: {len(stdout)}')
++    print('STDOUT tail:')
++    print(text[-args.tail_bytes:])
++    print('RESULT: tunnel STDOUT pipe smoke test failed', file=sys.stderr)
++    return 1
++
++
++def parse_args(argv):
++    parser = argparse.ArgumentParser(
++        description='Smoke-test Guacamole terminal text-output over WebSocket.'
++    )
++    parser.add_argument('--url', default=os.environ.get('GUAC_URL'),
++                        help='Base Guacamole URL. May also be set with GUAC_URL.')
++    parser.add_argument('--username', default=os.environ.get('GUAC_USERNAME'),
++                        help='Guacamole username. May also be set with GUAC_USERNAME.')
++    parser.add_argument('--password', default=os.environ.get('GUAC_PASSWORD'),
++                        help='Guacamole password. May also be set with GUAC_PASSWORD.')
++    parser.add_argument('--data-source',
++                        default=os.environ.get('GUAC_DATA_SOURCE', 'postgresql'),
++                        help='Guacamole datasource. Default: %(default)s')
++    parser.add_argument('--connection-id',
++                        default=os.environ.get('GUAC_CONNECTION_ID'),
++                        help='Guacamole connection identifier. May also be set with GUAC_CONNECTION_ID.')
++    parser.add_argument('--pipe-name', default='STDOUT',
++                        help='Expected outbound pipe stream name. Default: %(default)s')
++    parser.add_argument('--marker', default='GUAC_TEXT_OUTPUT_SMOKE_OK',
++                        help='Marker expected in command output. Default: %(default)s')
++    parser.add_argument('--command', default=None,
++                        help='Command to type. It must print --marker to stdout.')
++    parser.add_argument('--prompt', default='$ ',
++                        help='Prompt bytes to wait for before typing, or empty to type immediately. Default: %(default)r')
++    parser.add_argument('--pipe-only', action='store_true',
++                        help='Pass if observing the expected pipe is sufficient.')
++    parser.add_argument('--timeout', type=float, default=15,
++                        help='Overall timeout in seconds. Default: %(default)s')
++    parser.add_argument('--connect-timeout', type=float, default=5,
++                        help='WebSocket connect timeout. Default: %(default)s')
++    parser.add_argument('--receive-timeout', type=float, default=1,
++                        help='WebSocket receive timeout. Default: %(default)s')
++    parser.add_argument('--key-delay', type=float, default=0.01,
++                        help='Delay between key events. Default: %(default)s')
++    parser.add_argument('--tail-bytes', type=int, default=1200,
++                        help='Bytes of decoded STDOUT tail to print. Default: %(default)s')
++    args = parser.parse_args(argv)
++
++    missing = [
++        option for option, value in (
++            ('--url', args.url),
++            ('--username', args.username),
++            ('--password', args.password),
++            ('--connection-id', args.connection_id),
++        )
++        if not value
++    ]
++
++    if missing:
++        parser.error('missing required arguments: ' + ', '.join(missing))
++
++    return args
++
++
++def main(argv=None):
++    return run_smoke_test(parse_args(argv))
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+-- 
+2.54.0
+
+
+From a5091def77086937110c2a967d39d0331ff46a39 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Sat, 4 Jul 2026 20:46:34 -0300
+Subject: [PATCH 06/11] test: add direct-guacd text-output e2e harness
+ (SSH/telnet/k8s)
+
+Adds a manual end-to-end test harness for the text-output feature that
+speaks the Guacamole protocol directly to guacd, complementing the
+existing web-app tunnel smoke test.
+
+- text-output-guacd-e2e.py: minimal guacd protocol client; performs the
+  handshake and captures/decodes the outbound STDOUT pipe (stdlib only).
+- text-output-k8s-exec-mock.py: mock Kubernetes exec WebSocket endpoint
+  (v4.channel.k8s.io) emitting ANSI on channel 1, so the kubernetes
+  protocol can be validated without a real cluster.
+- text-output-e2e.sh: runs positive (raw ANSI teed to STDOUT pipe) and
+  negative (default-off / disable-copy gate -> no pipe) checks for all
+  three terminal protocols.
+- README plus EXTRA_DIST entries.
+
+Refs #3
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ Makefile.am                                   |   4 +
+ util/manual-tests/README-text-output-e2e.md   |  49 +++++
+ util/manual-tests/text-output-e2e.sh          | 109 ++++++++++
+ util/manual-tests/text-output-guacd-e2e.py    | 196 ++++++++++++++++++
+ .../manual-tests/text-output-k8s-exec-mock.py |  54 +++++
+ 5 files changed, 412 insertions(+)
+ create mode 100644 util/manual-tests/README-text-output-e2e.md
+ create mode 100755 util/manual-tests/text-output-e2e.sh
+ create mode 100755 util/manual-tests/text-output-guacd-e2e.py
+ create mode 100755 util/manual-tests/text-output-k8s-exec-mock.py
+
+diff --git a/Makefile.am b/Makefile.am
+index b88763a2..b833c522 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -101,4 +101,8 @@ EXTRA_DIST =                         \
+     doc/libguac-terminal/Doxyfile.in \
+     src/guacd-docker                 \
+     util/generate-test-runner.pl      \
++    util/manual-tests/README-text-output-e2e.md \
++    util/manual-tests/text-output-e2e.sh \
++    util/manual-tests/text-output-guacd-e2e.py \
++    util/manual-tests/text-output-k8s-exec-mock.py \
+     util/manual-tests/text-output-tunnel-smoke.py
+diff --git a/util/manual-tests/README-text-output-e2e.md b/util/manual-tests/README-text-output-e2e.md
+new file mode 100644
+index 00000000..115c4d45
+--- /dev/null
++++ b/util/manual-tests/README-text-output-e2e.md
+@@ -0,0 +1,49 @@
++# text-output end-to-end manual tests
++
++These manual tests validate the opt-in terminal **text-output** mode (issue #3)
++directly against a running `guacd`, for all three terminal protocols (SSH,
++telnet, Kubernetes). They complement `text-output-tunnel-smoke.py`, which
++instead drives the full web application over the WebSocket tunnel.
++
++## Files
++
++| File | Purpose |
++| --- | --- |
++| `text-output-guacd-e2e.py` | A minimal Guacamole-protocol client that speaks directly to `guacd`, performs the handshake for a protocol, and captures/decodes the outbound `STDOUT` pipe opened by text-output mode. Supports `--expect <substr>` and `--expect-no-pipe`. Stdlib only. |
++| `text-output-k8s-exec-mock.py` | A mock Kubernetes API pod-`exec` WebSocket endpoint (subprotocol `v4.channel.k8s.io`) that emits raw ANSI on channel 1, so the kubernetes protocol can be tested without a real cluster. Needs the `websockets` package. |
++| `text-output-e2e.sh` | Orchestrates the whole suite: positive path (raw ANSI is teed) and negative path (no pipe when text-output is off or gated by `disable-copy`) for all three protocols. |
++
++## What it checks
++
++Positive path (per protocol): text-output opens a `STDOUT` pipe
++(`application/octet-stream`) and the exact remote byte stream — including ANSI
++escape sequences — is delivered verbatim.
++
++Negative path: no `STDOUT` pipe is opened when `text-output` is unset, and none
++is opened when `text-output=true` but `disable-copy=true` (the copy/exfil gate).
++
++## Requirements
++
++- A `guacd` built with the SSH/telnet/kubernetes protocols and text-output,
++  listening on `127.0.0.1:4822` (override with `GUACD_HOST` / `GUACD_PORT`).
++- `python3`, `socat`, and the python3 `websockets` package.
++- An `sshd` reachable for the SSH case, accepting the configured credentials.
++
++## Running
++
++```sh
++# Defaults: SSH_HOST=127.0.0.1 SSH_PORT=22 SSH_USER=tester SSH_PASS=testpass123
++./text-output-e2e.sh
++
++# Point the SSH case at a different target:
++SSH_HOST=10.0.0.5 SSH_USER=alice SSH_PASS=secret ./text-output-e2e.sh
++```
++
++The script exits non-zero if any check fails. Individual cases can also be run
++by hand, e.g.:
++
++```sh
++python3 text-output-guacd-e2e.py ssh \
++  '{"hostname":"127.0.0.1","port":"22","username":"tester","password":"testpass123",
++    "text-output":"true","command":"printf hi"}' --expect hi
++```
+diff --git a/util/manual-tests/text-output-e2e.sh b/util/manual-tests/text-output-e2e.sh
+new file mode 100755
+index 00000000..3a311b80
+--- /dev/null
++++ b/util/manual-tests/text-output-e2e.sh
+@@ -0,0 +1,109 @@
++#!/bin/bash
++#
++# End-to-end validation of Guacamole terminal text-output mode against a local
++# guacd, for all three terminal protocols (SSH, telnet, kubernetes), covering
++# both the positive path (raw ANSI is teed to the STDOUT pipe) and the negative
++# path (no pipe when text-output is off or gated by disable-copy).
++#
++# This is a manual test: it needs a running guacd (127.0.0.1:4822) and creates
++# throwaway local servers for telnet (socat) and kubernetes (a mock WebSocket
++# exec endpoint). SSH is exercised against a real sshd, which must accept the
++# credentials passed below.
++#
++# Requirements in the environment running this script:
++#   - guacd built with the SSH/telnet/kubernetes protocols and text-output
++#   - python3, socat, and the python3 "websockets" package
++#   - an sshd reachable at SSH_HOST:SSH_PORT accepting SSH_USER/SSH_PASS
++#
++# Configure the SSH target via environment variables (defaults shown):
++#   SSH_HOST=127.0.0.1 SSH_PORT=22 SSH_USER=tester SSH_PASS=testpass123
++#
++set -u
++
++DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++DRIVER="$DIR/text-output-guacd-e2e.py"
++MOCK="$DIR/text-output-k8s-exec-mock.py"
++
++SSH_HOST="${SSH_HOST:-127.0.0.1}"
++SSH_PORT="${SSH_PORT:-22}"
++SSH_USER="${SSH_USER:-tester}"
++SSH_PASS="${SSH_PASS:-testpass123}"
++TELNET_PORT="${TELNET_PORT:-2323}"
++K8S_PORT="${K8S_PORT:-8091}"
++
++RESULT=0
++TMP="$(mktemp -d)"
++trap 'rm -rf "$TMP"; pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null; pkill -f "$MOCK" 2>/dev/null' EXIT
++
++# ANSI-emitting program used as the telnet "shell".
++ANSI="$TMP/ansi-emit.sh"
++cat > "$ANSI" <<'EOS'
++#!/bin/bash
++printf '\033[35mTELNET-TEXT-OUTPUT marker\033[0m\r\n'
++sleep 3
++EOS
++chmod +x "$ANSI"
++
++hr(){ echo; echo "======================================================"; echo "== $1"; echo "======================================================"; }
++check(){ [ "$1" -ne 0 ] && RESULT=1; }
++
++ss -ltn 2>/dev/null | grep -q ':4822' || { echo "guacd is not listening on 127.0.0.1:4822"; exit 3; }
++
++# =========================== POSITIVE PATH ===========================
++
++hr "SSH  (real sshd, command emits red ANSI)  -> expect STDOUT pipe"
++python3 "$DRIVER" ssh \
++  "{\"hostname\":\"$SSH_HOST\",\"port\":\"$SSH_PORT\",\"username\":\"$SSH_USER\",\"password\":\"$SSH_PASS\",\"text-output\":\"true\",\"command\":\"printf '\\\\033[31mSSH-TEXT-OUTPUT marker\\\\033[0m\\\\r\\\\n'; sleep 2\"}" \
++  --secs 10 --expect "SSH-TEXT-OUTPUT marker"
++check $?
++
++hr "TELNET  (socat server -> magenta ANSI)  -> expect STDOUT pipe"
++pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null; sleep 0.3
++socat TCP-LISTEN:"$TELNET_PORT",reuseaddr,fork EXEC:"$ANSI",pty,stderr & sleep 0.5
++python3 "$DRIVER" telnet \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$TELNET_PORT\",\"text-output\":\"true\"}" \
++  --secs 8 --expect "TELNET-TEXT-OUTPUT marker"
++check $?
++pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null
++
++hr "KUBERNETES  (mock exec WS -> green ANSI on channel 1)  -> expect STDOUT pipe"
++pkill -f "$MOCK" 2>/dev/null; sleep 0.3
++python3 "$MOCK" "$K8S_PORT" >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$DRIVER" kubernetes \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\"}" \
++  --secs 8 --expect "K8S-TEXT-OUTPUT"
++check $?
++pkill -f "$MOCK" 2>/dev/null
++
++# =========================== NEGATIVE PATH ===========================
++
++hr "SSH default-off (no text-output)  -> expect NO pipe"
++python3 "$DRIVER" ssh \
++  "{\"hostname\":\"$SSH_HOST\",\"port\":\"$SSH_PORT\",\"username\":\"$SSH_USER\",\"password\":\"$SSH_PASS\",\"command\":\"printf hi; sleep 1\"}" \
++  --secs 6 --expect-no-pipe
++check $?
++
++hr "SSH gate (text-output=true + disable-copy=true)  -> expect NO pipe"
++python3 "$DRIVER" ssh \
++  "{\"hostname\":\"$SSH_HOST\",\"port\":\"$SSH_PORT\",\"username\":\"$SSH_USER\",\"password\":\"$SSH_PASS\",\"command\":\"printf hi; sleep 1\",\"text-output\":\"true\",\"disable-copy\":\"true\"}" \
++  --secs 6 --expect-no-pipe
++check $?
++
++hr "TELNET default-off  -> expect NO pipe"
++pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null; sleep 0.3
++socat TCP-LISTEN:"$TELNET_PORT",reuseaddr,fork EXEC:"$ANSI",pty,stderr & sleep 0.5
++python3 "$DRIVER" telnet "{\"hostname\":\"127.0.0.1\",\"port\":\"$TELNET_PORT\"}" --secs 5 --expect-no-pipe
++check $?
++pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null
++
++hr "KUBERNETES gate (text-output=true + disable-copy=true)  -> expect NO pipe"
++pkill -f "$MOCK" 2>/dev/null; sleep 0.3
++python3 "$MOCK" "$K8S_PORT" >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$DRIVER" kubernetes \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\",\"disable-copy\":\"true\"}" \
++  --secs 5 --expect-no-pipe
++check $?
++pkill -f "$MOCK" 2>/dev/null
++
++hr "OVERALL: $([ $RESULT -eq 0 ] && echo ALL-PASS || echo SOME-FAILED)"
++exit $RESULT
+diff --git a/util/manual-tests/text-output-guacd-e2e.py b/util/manual-tests/text-output-guacd-e2e.py
+new file mode 100755
+index 00000000..7f4a64a6
+--- /dev/null
++++ b/util/manual-tests/text-output-guacd-e2e.py
+@@ -0,0 +1,196 @@
++#!/usr/bin/env python3
++"""
++Manual end-to-end test client for Guacamole terminal text-output mode.
++
++Unlike text-output-tunnel-smoke.py (which drives the full web-app + WebSocket
++tunnel), this script speaks the Guacamole protocol *directly to guacd* over its
++TCP socket. It performs the handshake for a terminal protocol (ssh / telnet /
++kubernetes), then captures the outbound "STDOUT" pipe stream opened by
++text-output mode and decodes its blobs, verifying that the raw remote byte
++stream -- including ANSI/escape sequences -- arrives verbatim.
++
++It also supports negative validation (--expect-no-pipe): confirming that no
++STDOUT pipe is opened when text-output is off or is gated by disable-copy.
++
++guacd host/port default to 127.0.0.1:4822 (override with GUACD_HOST/GUACD_PORT).
++Requires only the Python standard library.
++
++Usage:
++    text-output-guacd-e2e.py <protocol> '<json-params>' [options]
++
++Options:
++    --secs N            How long to read the session stream (default 8).
++    --expect SUBSTR     Require SUBSTR to appear in the captured raw bytes.
++    --expect-no-pipe    Pass only if NO STDOUT pipe is opened (negative test).
++
++Example:
++    text-output-guacd-e2e.py ssh \\
++        '{"hostname":"127.0.0.1","port":"22","username":"u","password":"p",
++          "text-output":"true","command":"printf hi"}' --expect hi
++"""
++import socket
++import sys
++import os
++import json
++import base64
++import time
++import re
++
++HOST = os.environ.get("GUACD_HOST", "127.0.0.1")
++PORT = int(os.environ.get("GUACD_PORT", "4822"))
++
++
++def enc(*elems):
++    """Encode a Guacamole protocol instruction from its elements."""
++    return ",".join("%d.%s" % (len(e), e) for e in elems) + ";"
++
++
++class Parser:
++    """Incremental parser for the Guacamole instruction stream."""
++
++    def __init__(self):
++        self.buf = b""
++
++    def feed(self, data):
++        self.buf += data
++
++    def __iter__(self):
++        return self
++
++    def __next__(self):
++        b = self.buf
++        i = 0
++        elems = []
++        while True:
++            dot = b.find(b".", i)
++            if dot < 0:
++                raise StopIteration
++            try:
++                length = int(b[i:dot])
++            except ValueError:
++                raise StopIteration
++            start = dot + 1
++            end = start + length
++            if end >= len(b):
++                raise StopIteration
++            elems.append(b[start:end])
++            sep = b[end:end + 1]
++            i = end + 1
++            if sep == b";":
++                self.buf = b[i:]
++                return elems
++            if sep == b",":
++                continue
++            raise StopIteration
++
++
++def main():
++    if len(sys.argv) < 3:
++        raise SystemExit(__doc__)
++
++    proto = sys.argv[1]
++    params = json.loads(sys.argv[2])
++    secs = 8.0
++    expect = None
++    expect_no_pipe = False
++    a = sys.argv[3:]
++    for j, v in enumerate(a):
++        if v == "--secs":
++            secs = float(a[j + 1])
++        elif v == "--expect":
++            expect = a[j + 1]
++        elif v == "--expect-no-pipe":
++            expect_no_pipe = True
++
++    s = socket.create_connection((HOST, PORT), timeout=10)
++    s.sendall(enc("select", proto).encode())
++
++    p = Parser()
++    names = None
++    version = "VERSION_1_5_0"
++
++    # Handshake: read the "args" instruction guacd sends. Its first element is
++    # the protocol version; the rest are the declared parameter names.
++    s.settimeout(10)
++    while names is None:
++        data = s.recv(65536)
++        if not data:
++            print("EOF during handshake")
++            sys.exit(2)
++        p.feed(data)
++        for inst in p:
++            if inst[0] == b"args":
++                els = [e.decode(errors="replace") for e in inst[1:]]
++                if els and els[0].startswith("VERSION"):
++                    version = els[0]
++                names = els[1:]
++    print("[handshake] version=%s  %d declared args" % (version, len(names)))
++
++    # Minimal client capabilities, then connect. The "connect" instruction must
++    # carry num_args + 1 elements: the client version echo followed by one value
++    # per declared parameter name (positionally).
++    s.sendall(enc("size", "1024", "768", "96").encode())
++    s.sendall(enc("audio").encode())
++    s.sendall(enc("video").encode())
++    s.sendall(enc("image").encode())
++    values = [params.get(n, "") for n in names]
++    s.sendall(enc("connect", version, *values).encode())
++    print("[connect] sent %d values; set: %s"
++          % (len(values), {n: params[n] for n in names if n in params}))
++
++    stdout_idx = None
++    captured = bytearray()
++    pipe_seen = False
++    deadline = time.time() + secs
++    s.settimeout(1.0)
++    while time.time() < deadline:
++        try:
++            data = s.recv(65536)
++        except socket.timeout:
++            continue
++        if not data:
++            print("[stream] guacd closed connection")
++            break
++        p.feed(data)
++        for inst in p:
++            op = inst[0].decode(errors="replace")
++            if op == "sync":
++                # Echo sync to keep guacd's frame loop (and pipe flushing) alive.
++                ts = inst[1].decode() if len(inst) > 1 else "0"
++                s.sendall(enc("sync", ts).encode())
++            elif op == "pipe":
++                idx, mimetype, name = inst[1].decode(), inst[2].decode(), inst[3].decode()
++                print("[pipe] index=%s mimetype=%s name=%s" % (idx, mimetype, name))
++                if name == "STDOUT":
++                    stdout_idx, pipe_seen = idx, True
++            elif op == "blob" and stdout_idx is not None and inst[1].decode() == stdout_idx:
++                captured += base64.b64decode(inst[2])
++            elif op == "error":
++                print("[error] %s" % b",".join(inst[1:]).decode(errors="replace"))
++            elif op == "disconnect":
++                print("[stream] disconnect")
++                deadline = 0
++
++    print("\n===== RESULT =====")
++    print("STDOUT pipe opened : %s" % pipe_seen)
++    print("raw bytes captured : %d" % len(captured))
++    print("contains ESC (0x1b): %s" % (b"\x1b" in captured))
++    snippet = re.sub(r"[\x00-\x08\x0e-\x1f]", ".",
++                     captured.decode("utf-8", errors="replace"))[:400]
++    print("snippet            : %r" % snippet)
++
++    if expect_no_pipe:
++        ok = not pipe_seen
++        print("expect NO pipe     : %s" % ok)
++    else:
++        ok = pipe_seen and len(captured) > 0
++        if expect is not None:
++            found = expect.encode() in captured
++            print("expect %r        : %s" % (expect, found))
++            ok = ok and found
++    print("VERDICT            : %s" % ("PASS" if ok else "FAIL"))
++    sys.exit(0 if ok else 1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/util/manual-tests/text-output-k8s-exec-mock.py b/util/manual-tests/text-output-k8s-exec-mock.py
+new file mode 100755
+index 00000000..aa427cb5
+--- /dev/null
++++ b/util/manual-tests/text-output-k8s-exec-mock.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python3
++"""
++Mock Kubernetes API "exec" endpoint for testing guacd's kubernetes protocol.
++
++guacd's kubernetes client connects to the Kubernetes API pod-exec endpoint over
++a WebSocket using subprotocol "v4.channel.k8s.io", and reads binary frames whose
++first byte is the stream channel (1 = stdout, 2 = stderr). This server mimics
++that endpoint and emits channel-1 frames containing raw ANSI, so text-output
++mode can be validated end to end without a real cluster.
++
++Point a guacd kubernetes connection at this server with use-ssl=false, e.g.
++hostname=127.0.0.1 port=8091 namespace=default pod=testpod exec-command=/bin/sh.
++
++Requires the third-party "websockets" Python package.
++
++Usage: text-output-k8s-exec-mock.py [port]   (default 8091)
++"""
++import asyncio
++import sys
++
++try:
++    import websockets
++except ImportError as exc:  # pragma: no cover - manual dependency check
++    raise SystemExit('Missing dependency: install the "websockets" Python package.') from exc
++
++SUBPROTO = "v4.channel.k8s.io"
++PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8091
++
++
++def frame(text):
++    """Wrap text as a Kubernetes exec stdout (channel 1) binary frame."""
++    return b"\x01" + text.encode()
++
++
++async def handler(ws, *args):
++    print("[k8s-mock] client connected, subproto=%r path=%s"
++          % (getattr(ws, "subprotocol", None), getattr(ws, "path", "?")), flush=True)
++    try:
++        await ws.send(frame("\x1b[36mK8S-MOCK-EXEC ready\x1b[0m\r\n"))
++        for i in range(20):
++            await ws.send(frame("\x1b[32mK8S-TEXT-OUTPUT line %02d\x1b[0m\r\n" % i))
++            await asyncio.sleep(0.2)
++    except Exception as exc:  # noqa: BLE001 - report and exit the handler
++        print("[k8s-mock] handler ended: %r" % exc, flush=True)
++
++
++async def main():
++    async with websockets.serve(handler, "127.0.0.1", PORT, subprotocols=[SUBPROTO]):
++        print("[k8s-mock] listening ws://127.0.0.1:%d (subproto %s)" % (PORT, SUBPROTO), flush=True)
++        await asyncio.Future()
++
++
++if __name__ == "__main__":
++    asyncio.run(main())
+-- 
+2.54.0
+
+
+From 5c2f1720648b1be00da0a87f198f2bd3d8e11733 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Sat, 4 Jul 2026 21:26:31 -0300
+Subject: [PATCH 07/11] terminal: deliver text-output via a per-user (owner)
+ stream
+
+The text-output STDOUT pipe was allocated with guac_client_alloc_stream()
+and written to client->socket. That has two problems:
+
+- It is broadcast to every user on the connection, so on a shared
+  connection any joined participant receives the raw terminal output,
+  not just the intended consumer.
+- Client-level streams have odd indices, which __guac_handle_ack()
+  ignores, so the stream can never receive "ack" instructions and thus
+  cannot participate in flow control.
+
+Allocate the stream on the connection owner instead, via
+guac_user_alloc_stream(), and perform all pipe/blob/end sends inside a
+guac_client_for_owner() callback. The owner is the natural (and, for the
+native CLI use case, sole) consumer. This delivers the raw output only to
+the owner and yields an even, ack-routable stream index. Running the send
+under for_owner() also holds the users read-lock for the duration of the
+write, so the owner cannot be freed mid-write; if the owner has left, the
+now-invalid stream is abandoned safely.
+
+No lock-ordering hazard: the only path taking both the terminal lock and
+the users lock is this one (terminal -> users); user add/remove take the
+users lock but never the terminal lock.
+
+Refs #22
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/terminal.c | 175 ++++++++++++++++++++++++++++++++++------
+ 1 file changed, 149 insertions(+), 26 deletions(-)
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 99bf1463..62cf2493 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3021,25 +3021,156 @@ void guac_terminal_pipe_stream_close(guac_terminal* term) {
+ 
+ }
+ 
++/**
++ * Parameters for guac_terminal_text_output_open_owner(), passed through
++ * guac_client_for_owner().
++ */
++typedef struct guac_terminal_text_output_open_params {
++
++    /**
++     * The terminal whose text-output stream is being opened.
++     */
++    guac_terminal* term;
++
++    /**
++     * The name to assign to the opened pipe stream.
++     */
++    const char* name;
++
++} guac_terminal_text_output_open_params;
++
++/**
++ * Guacamole user callback (guac_client_for_owner()) which allocates and opens
++ * the text-output pipe stream on the connection owner's socket. The owner is
++ * the natural (and, for the native CLI use case, sole) consumer of the raw
++ * text stream. Allocating a user-level stream, rather than a client-level one,
++ * ensures the raw output is delivered only to that user instead of being
++ * broadcast to every user sharing the connection, and yields an even stream
++ * index so that "ack" instructions from the client are routed to the stream.
++ *
++ * @param owner
++ *     The connection owner, or NULL if the connection currently has no owner.
++ *
++ * @param data
++ *     A pointer to a guac_terminal_text_output_open_params.
++ *
++ * @return
++ *     Always NULL.
++ */
++static void* guac_terminal_text_output_open_owner(guac_user* owner, void* data) {
++
++    guac_terminal_text_output_open_params* params =
++        (guac_terminal_text_output_open_params*) data;
++    guac_terminal* term = params->term;
++
++    /* Nothing to do if the connection has no owner to receive the stream */
++    if (owner == NULL)
++        return NULL;
++
++    guac_stream* stream = guac_user_alloc_stream(owner);
++
++    /* Open stream as a raw byte stream; it carries the remote PTY output
++     * verbatim (including ANSI/escape sequences). The mimetype is advisory:
++     * blob payloads are base64-encoded and thus binary-safe regardless. */
++    guac_protocol_send_pipe(owner->socket, stream,
++            "application/octet-stream", params->name);
++    guac_socket_flush(owner->socket);
++
++    term->text_output_stream = stream;
++    return NULL;
++
++}
++
++/**
++ * Guacamole user callback (guac_client_for_owner()) which writes any buffered
++ * text-output data to the connection owner's socket. If the owner has since
++ * left the connection, the (now invalid) user-level stream is abandoned.
++ *
++ * @param owner
++ *     The connection owner, or NULL if the connection currently has no owner.
++ *
++ * @param data
++ *     A pointer to the guac_terminal whose buffered text output should be sent.
++ *
++ * @return
++ *     Always NULL.
++ */
++static void* guac_terminal_text_output_flush_owner(guac_user* owner, void* data) {
++
++    guac_terminal* term = (guac_terminal*) data;
++
++    /* If the owner has left, its user-level streams have been freed; abandon
++     * the dangling stream rather than dereferencing it */
++    if (owner == NULL) {
++        term->text_output_stream = NULL;
++        term->text_output_length = 0;
++        return NULL;
++    }
++
++    if (term->text_output_stream != NULL && term->text_output_length > 0) {
++        guac_protocol_send_blob(owner->socket, term->text_output_stream,
++                term->text_output_buffer, term->text_output_length);
++        guac_socket_flush(owner->socket);
++        term->text_output_length = 0;
++    }
++
++    return NULL;
++
++}
++
++/**
++ * Guacamole user callback (guac_client_for_owner()) which flushes any remaining
++ * buffered text output, ends the text-output stream, and frees it. If the owner
++ * has already left, the stream is simply abandoned.
++ *
++ * @param owner
++ *     The connection owner, or NULL if the connection currently has no owner.
++ *
++ * @param data
++ *     A pointer to the guac_terminal whose text-output stream should be closed.
++ *
++ * @return
++ *     Always NULL.
++ */
++static void* guac_terminal_text_output_close_owner(guac_user* owner, void* data) {
++
++    guac_terminal* term = (guac_terminal*) data;
++
++    if (owner != NULL && term->text_output_stream != NULL) {
++
++        /* Flush remaining buffered data and write end of stream */
++        if (term->text_output_length > 0) {
++            guac_protocol_send_blob(owner->socket, term->text_output_stream,
++                    term->text_output_buffer, term->text_output_length);
++            term->text_output_length = 0;
++        }
++        guac_protocol_send_end(owner->socket, term->text_output_stream);
++        guac_socket_flush(owner->socket);
++
++        guac_user_free_stream(owner, term->text_output_stream);
++    }
++
++    term->text_output_stream = NULL;
++    return NULL;
++
++}
++
+ void guac_terminal_text_output_open(guac_terminal* term, const char* name) {
+ 
+     guac_client* client = term->client;
+-    guac_socket* socket = client->socket;
+ 
+     /* Close existing text-output stream, if any */
+     guac_terminal_text_output_close(term);
+ 
+     guac_terminal_lock(term);
+ 
+-    /* Allocate and assign new text-output stream */
+-    term->text_output_stream = guac_client_alloc_stream(client);
+     term->text_output_length = 0;
+ 
+-    /* Open stream as a raw byte stream; it carries the remote PTY output
+-     * verbatim (including ANSI/escape sequences). The mimetype is advisory:
+-     * blob payloads are base64-encoded and thus binary-safe regardless. */
+-    guac_protocol_send_pipe(socket, term->text_output_stream,
+-            "application/octet-stream", name);
++    /* Allocate and open the stream on the connection owner's socket, so raw
++     * output is delivered only to the owner (not broadcast to every user) and
++     * uses a user-level stream index able to receive "ack" instructions */
++    guac_terminal_text_output_open_params params = { term, name };
++    guac_client_for_owner(client, guac_terminal_text_output_open_owner, &params);
+ 
+     guac_terminal_unlock(term);
+ 
+@@ -3091,36 +3222,28 @@ void guac_terminal_text_output_write(guac_terminal* term,
+ 
+ void guac_terminal_text_output_flush(guac_terminal* term) {
+ 
+-    guac_client* client = term->client;
+-    guac_socket* socket = client->socket;
+-    guac_stream* stream = term->text_output_stream;
+-
+-    /* Write blob if data exists in buffer */
+-    if (stream != NULL && term->text_output_length > 0) {
+-        guac_protocol_send_blob(socket, stream,
+-                term->text_output_buffer, term->text_output_length);
+-        term->text_output_length = 0;
+-    }
++    /* Send buffered data to the connection owner. The terminal lock is already
++     * held by the caller (guac_terminal_flush() or the buffer-full path of
++     * guac_terminal_text_output_write()). */
++    if (term->text_output_stream != NULL && term->text_output_length > 0)
++        guac_client_for_owner(term->client,
++                guac_terminal_text_output_flush_owner, term);
+ 
+ }
+ 
+ void guac_terminal_text_output_close(guac_terminal* term) {
+ 
+     guac_client* client = term->client;
+-    guac_socket* socket = client->socket;
+ 
+     guac_terminal_lock(term);
+ 
+     /* Close any existing text-output stream */
+     if (term->text_output_stream != NULL) {
+ 
+-        /* Flush remaining buffered data and write end of stream */
+-        guac_terminal_text_output_flush(term);
+-        guac_protocol_send_end(socket, term->text_output_stream);
+-
+-        /* Destroy stream */
+-        guac_client_free_stream(client, term->text_output_stream);
+-        term->text_output_stream = NULL;
++        /* Flush remaining buffered data, end and free the stream in the
++         * owner's context (or abandon it if the owner has left) */
++        guac_client_for_owner(client,
++                guac_terminal_text_output_close_owner, term);
+ 
+         /* Log closure at debug level */
+         guac_client_log(client, GUAC_LOG_DEBUG,
+-- 
+2.54.0
+
+
+From ce5784d31cd5b67188f55ad4296c2b3de047dee6 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Sat, 4 Jul 2026 21:37:04 -0300
+Subject: [PATCH 08/11] terminal: add flow control to text-output via ack
+ backpressure
+
+Track the number of text-output blobs sent to the connection owner but
+not yet acknowledged. When that reaches a bound
+(GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT), further buffered output is
+dropped rather than sent, so a stalled or slow text-output consumer
+cannot cause unbounded buffering.
+
+Output is dropped rather than blocked deliberately: in tee mode the raw
+stream shares the protocol read loop with the graphical display, so
+blocking the source to backpressure the text consumer would also stall
+any co-attached browser user. True blocking backpressure (safe only when
+the CLI is the sole consumer) belongs to the headless raw mode (#23).
+
+The stream now carries an ack handler that decrements the outstanding
+count as blobs are acknowledged. The manual e2e harness is extended to
+acknowledge blobs (with a --no-ack switch and --expect-absent assertion)
+and to exercise both directions: a flood delivered in full when acked,
+and dropped backlog when unacked.
+
+Refs #22
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/terminal.c                       | 67 +++++++++++++++++++
+ src/terminal/terminal/terminal-priv.h         | 12 ++++
+ util/manual-tests/text-output-e2e.sh          | 22 ++++++
+ util/manual-tests/text-output-guacd-e2e.py    | 17 +++++
+ .../manual-tests/text-output-k8s-exec-mock.py |  7 +-
+ 5 files changed, 122 insertions(+), 3 deletions(-)
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 62cf2493..8da76bed 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3021,6 +3021,51 @@ void guac_terminal_pipe_stream_close(guac_terminal* term) {
+ 
+ }
+ 
++/**
++ * The maximum number of text-output blobs that may be outstanding (sent to the
++ * connection owner but not yet acknowledged) before further buffered output is
++ * dropped. This bounds the backlog devoted to a stalled text-output consumer.
++ * At up to sizeof(text_output_buffer) bytes per blob, 16 outstanding blobs is
++ * on the order of 96 KB.
++ */
++#define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT 16
++
++/**
++ * Handler for "ack" instructions received on the text-output stream. Each
++ * acknowledged blob decrements the count of outstanding blobs, permitting
++ * further buffered output to be sent (see
++ * guac_terminal_text_output_flush_owner()).
++ *
++ * @param user
++ *     The user acknowledging the blob (the connection owner).
++ *
++ * @param stream
++ *     The text-output stream being acknowledged. Its data pointer references
++ *     the associated guac_terminal.
++ *
++ * @param error
++ *     An arbitrary, human-readable description of the status.
++ *
++ * @param status
++ *     The status code describing the acknowledged operation.
++ *
++ * @return
++ *     Always zero.
++ */
++static int guac_terminal_text_output_ack(guac_user* user, guac_stream* stream,
++        char* error, guac_protocol_status status) {
++
++    guac_terminal* term = (guac_terminal*) stream->data;
++
++    guac_terminal_lock(term);
++    if (term->text_output_inflight > 0)
++        term->text_output_inflight--;
++    guac_terminal_unlock(term);
++
++    return 0;
++
++}
++
+ /**
+  * Parameters for guac_terminal_text_output_open_owner(), passed through
+  * guac_client_for_owner().
+@@ -3069,6 +3114,11 @@ static void* guac_terminal_text_output_open_owner(guac_user* owner, void* data)
+ 
+     guac_stream* stream = guac_user_alloc_stream(owner);
+ 
++    /* Route "ack" instructions for this stream back to the terminal so that
++     * outstanding blobs can be tracked for flow control */
++    stream->data = term;
++    stream->ack_handler = guac_terminal_text_output_ack;
++
+     /* Open stream as a raw byte stream; it carries the remote PTY output
+      * verbatim (including ANSI/escape sequences). The mimetype is advisory:
+      * blob payloads are base64-encoded and thus binary-safe regardless. */
+@@ -3108,10 +3158,26 @@ static void* guac_terminal_text_output_flush_owner(guac_user* owner, void* data)
+     }
+ 
+     if (term->text_output_stream != NULL && term->text_output_length > 0) {
++
++        /* Apply backpressure: if too many blobs are outstanding, the consumer
++         * is not keeping up. Drop this buffered output rather than sending it,
++         * bounding memory use. Output is dropped (not blocked) because in tee
++         * mode this raw stream shares the protocol read loop with the graphical
++         * display, and blocking the source would stall any browser user too. */
++        if (term->text_output_inflight >= GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT) {
++            guac_client_log(term->client, GUAC_LOG_DEBUG, "Dropping %i bytes of "
++                    "text-output: consumer is not keeping up (%i blobs "
++                    "outstanding).", term->text_output_length,
++                    term->text_output_inflight);
++            term->text_output_length = 0;
++            return NULL;
++        }
++
+         guac_protocol_send_blob(owner->socket, term->text_output_stream,
+                 term->text_output_buffer, term->text_output_length);
+         guac_socket_flush(owner->socket);
+         term->text_output_length = 0;
++        term->text_output_inflight++;
+     }
+ 
+     return NULL;
+@@ -3165,6 +3231,7 @@ void guac_terminal_text_output_open(guac_terminal* term, const char* name) {
+     guac_terminal_lock(term);
+ 
+     term->text_output_length = 0;
++    term->text_output_inflight = 0;
+ 
+     /* Allocate and open the stream on the connection owner's socket, so raw
+      * output is delivered only to the owner (not broadcast to every user) and
+diff --git a/src/terminal/terminal/terminal-priv.h b/src/terminal/terminal/terminal-priv.h
+index 5c7d1a5c..5829b463 100644
+--- a/src/terminal/terminal/terminal-priv.h
++++ b/src/terminal/terminal/terminal-priv.h
+@@ -173,6 +173,18 @@ struct guac_terminal {
+      */
+     int text_output_length;
+ 
++    /**
++     * The number of text-output blobs which have been sent to the connection
++     * owner but not yet acknowledged via an "ack" instruction. This applies
++     * backpressure: when it reaches GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT,
++     * further buffered output is dropped rather than sent, bounding the memory
++     * and backlog devoted to a text-output consumer that has stalled. In tee
++     * mode the raw stream shares the protocol read loop with the graphical
++     * display, so output is dropped rather than blocked, to avoid stalling any
++     * co-attached browser user.
++     */
++    int text_output_inflight;
++
+     /**
+      * The currently-active typescript recording all terminal output, or NULL
+      * if no typescript is being used for the terminal session.
+diff --git a/util/manual-tests/text-output-e2e.sh b/util/manual-tests/text-output-e2e.sh
+index 3a311b80..ed38f2b1 100755
+--- a/util/manual-tests/text-output-e2e.sh
++++ b/util/manual-tests/text-output-e2e.sh
+@@ -105,5 +105,27 @@ python3 "$DRIVER" kubernetes \
+ check $?
+ pkill -f "$MOCK" 2>/dev/null
+ 
++# =========================== FLOW CONTROL ===========================
++# Flood 60 lines (well past the server's outstanding-blob threshold). With
++# acks, everything is delivered; without acks, guacd drops the backlog.
++
++hr "FLOW CONTROL: 60-line flood WITH acks -> all lines delivered (line 59 present)"
++pkill -f "$MOCK" 2>/dev/null; sleep 0.3
++python3 "$MOCK" "$K8S_PORT" 60 >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$DRIVER" kubernetes \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\"}" \
++  --secs 12 --expect "K8S-TEXT-OUTPUT line 59"
++check $?
++pkill -f "$MOCK" 2>/dev/null
++
++hr "FLOW CONTROL: 60-line flood WITHOUT acks -> backlog dropped (line 00 present, line 59 absent)"
++pkill -f "$MOCK" 2>/dev/null; sleep 0.3
++python3 "$MOCK" "$K8S_PORT" 60 >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$DRIVER" kubernetes \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\"}" \
++  --secs 12 --no-ack --expect "K8S-TEXT-OUTPUT line 00" --expect-absent "K8S-TEXT-OUTPUT line 59"
++check $?
++pkill -f "$MOCK" 2>/dev/null
++
+ hr "OVERALL: $([ $RESULT -eq 0 ] && echo ALL-PASS || echo SOME-FAILED)"
+ exit $RESULT
+diff --git a/util/manual-tests/text-output-guacd-e2e.py b/util/manual-tests/text-output-guacd-e2e.py
+index 7f4a64a6..4dc2853f 100755
+--- a/util/manual-tests/text-output-guacd-e2e.py
++++ b/util/manual-tests/text-output-guacd-e2e.py
+@@ -21,7 +21,10 @@ Usage:
+ Options:
+     --secs N            How long to read the session stream (default 8).
+     --expect SUBSTR     Require SUBSTR to appear in the captured raw bytes.
++    --expect-absent S   Require S to NOT appear (e.g. to show dropped output
++                        under backpressure when combined with --no-ack).
+     --expect-no-pipe    Pass only if NO STDOUT pipe is opened (negative test).
++    --no-ack            Do not acknowledge blobs, to exercise flow control.
+ 
+ Example:
+     text-output-guacd-e2e.py ssh \\
+@@ -92,15 +95,21 @@ def main():
+     params = json.loads(sys.argv[2])
+     secs = 8.0
+     expect = None
++    expect_absent = None
+     expect_no_pipe = False
++    no_ack = False
+     a = sys.argv[3:]
+     for j, v in enumerate(a):
+         if v == "--secs":
+             secs = float(a[j + 1])
+         elif v == "--expect":
+             expect = a[j + 1]
++        elif v == "--expect-absent":
++            expect_absent = a[j + 1]
+         elif v == "--expect-no-pipe":
+             expect_no_pipe = True
++        elif v == "--no-ack":
++            no_ack = True
+ 
+     s = socket.create_connection((HOST, PORT), timeout=10)
+     s.sendall(enc("select", proto).encode())
+@@ -165,6 +174,10 @@ def main():
+                     stdout_idx, pipe_seen = idx, True
+             elif op == "blob" and stdout_idx is not None and inst[1].decode() == stdout_idx:
+                 captured += base64.b64decode(inst[2])
++                # Acknowledge the blob so guacd's flow control lets more
++                # through (unless deliberately withheld to test backpressure).
++                if not no_ack:
++                    s.sendall(enc("ack", stdout_idx, "", "0").encode())
+             elif op == "error":
+                 print("[error] %s" % b",".join(inst[1:]).decode(errors="replace"))
+             elif op == "disconnect":
+@@ -188,6 +201,10 @@ def main():
+             found = expect.encode() in captured
+             print("expect %r        : %s" % (expect, found))
+             ok = ok and found
++        if expect_absent is not None:
++            absent = expect_absent.encode() not in captured
++            print("expect absent %r : %s" % (expect_absent, absent))
++            ok = ok and absent
+     print("VERDICT            : %s" % ("PASS" if ok else "FAIL"))
+     sys.exit(0 if ok else 1)
+ 
+diff --git a/util/manual-tests/text-output-k8s-exec-mock.py b/util/manual-tests/text-output-k8s-exec-mock.py
+index aa427cb5..f5db25b8 100755
+--- a/util/manual-tests/text-output-k8s-exec-mock.py
++++ b/util/manual-tests/text-output-k8s-exec-mock.py
+@@ -13,7 +13,7 @@ hostname=127.0.0.1 port=8091 namespace=default pod=testpod exec-command=/bin/sh.
+ 
+ Requires the third-party "websockets" Python package.
+ 
+-Usage: text-output-k8s-exec-mock.py [port]   (default 8091)
++Usage: text-output-k8s-exec-mock.py [port] [lines]   (defaults: 8091, 20)
+ """
+ import asyncio
+ import sys
+@@ -25,6 +25,7 @@ except ImportError as exc:  # pragma: no cover - manual dependency check
+ 
+ SUBPROTO = "v4.channel.k8s.io"
+ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8091
++LINES = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+ 
+ 
+ def frame(text):
+@@ -37,9 +38,9 @@ async def handler(ws, *args):
+           % (getattr(ws, "subprotocol", None), getattr(ws, "path", "?")), flush=True)
+     try:
+         await ws.send(frame("\x1b[36mK8S-MOCK-EXEC ready\x1b[0m\r\n"))
+-        for i in range(20):
++        for i in range(LINES):
+             await ws.send(frame("\x1b[32mK8S-TEXT-OUTPUT line %02d\x1b[0m\r\n" % i))
+-            await asyncio.sleep(0.2)
++            await asyncio.sleep(0.1)
+     except Exception as exc:  # noqa: BLE001 - report and exit the handler
+         print("[k8s-mock] handler ended: %r" % exc, flush=True)
+ 
+-- 
+2.54.0
+
+
+From d746ddc5a19a4e861b36faf2ad1ba4e4df90e1d6 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Sat, 4 Jul 2026 23:38:57 -0300
+Subject: [PATCH 09/11] terminal: add headless "text-output=raw" mode (suppress
+ rendering)
+
+Extend the text-output parameter to accept "raw" in addition to "true":
+
+- "true" keeps the existing tee behaviour (raw bytes to the STDOUT pipe
+  AND the graphical display rendered for browser clients).
+- "raw" is headless: the graphical terminal is not rendered from remote
+  output. Each protocol read loop still tees the raw bytes to the pipe
+  but skips guac_terminal_write(), so no glyph parsing, rasterization,
+  image encoding, or graphical instructions are produced.
+
+For terminal-heavy interactive output this removes the dominant cost.
+Measured on a color-diverse workload, raw mode holds graphical output to
+a small constant init residual (~1 KB) regardless of volume, versus
+~100 KB+ for the same workload in tee mode, while delivering all text.
+
+Because raw mode does not render, the graphical frame cycle that normally
+flushes the text-output buffer never runs; a text_output_flush_immediately
+flag makes writes flush as they arrive so small outputs are not withheld
+until the buffer fills or the stream closes.
+
+Parsing accepts "true"/"raw" (any other value disables text-output),
+keeping existing "true" connections fully backward compatible. The
+disable-copy gate still applies. The manual e2e harness gains graphical-
+byte accounting (--max-graphics) and raw-mode checks for all three
+protocols proving text is delivered while graphics is suppressed.
+
+Note: raw mode still allocates the terminal (for input/size/stdin
+plumbing); eliminating that one-time allocation is a separate follow-up.
+
+Refs #23
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ README-text-output.md                      | 34 +++++++++++++++++-----
+ src/protocols/kubernetes/io.c              |  7 ++++-
+ src/protocols/kubernetes/kubernetes.c      |  3 +-
+ src/protocols/kubernetes/settings.c        | 15 ++++++++--
+ src/protocols/kubernetes/settings.h        | 10 +++++++
+ src/protocols/ssh/settings.c               | 14 +++++++--
+ src/protocols/ssh/settings.h               | 10 +++++++
+ src/protocols/ssh/ssh.c                    | 14 ++++++---
+ src/protocols/telnet/settings.c            | 14 +++++++--
+ src/protocols/telnet/settings.h            | 10 +++++++
+ src/protocols/telnet/telnet.c              | 11 +++++--
+ src/terminal/terminal.c                    |  9 +++++-
+ src/terminal/terminal/terminal-priv.h      | 10 +++++++
+ src/terminal/terminal/terminal.h           |  9 +++++-
+ util/manual-tests/text-output-e2e.sh       | 30 +++++++++++++++++++
+ util/manual-tests/text-output-guacd-e2e.py | 26 +++++++++++++++++
+ 16 files changed, 199 insertions(+), 27 deletions(-)
+
+diff --git a/README-text-output.md b/README-text-output.md
+index c326fa1c..6653526e 100644
+--- a/README-text-output.md
++++ b/README-text-output.md
+@@ -4,18 +4,36 @@ Terminal text-output mode
+ This branch adds an opt-in terminal connection parameter named
+ `text-output` for SSH, telnet, and Kubernetes connections.
+ 
+-When `text-output` is set to `true`, guacd tees the raw bytes received from the
+-remote terminal/PTY to an outbound Guacamole pipe stream named `STDOUT` while
+-continuing to render the normal graphical terminal display. Clients can consume
+-that pipe to implement CLI-style access to terminal sessions without scraping
+-pixels from the display.
++When `text-output` is enabled, guacd tees the raw bytes received from the remote
++terminal/PTY to an outbound Guacamole pipe stream named `STDOUT`. Clients can
++consume that pipe to implement CLI-style access to terminal sessions without
++scraping pixels from the display.
++
++Modes
++-----
++
++The parameter accepts two enabled values:
++
++* `text-output=true` — **tee** mode: the raw bytes are teed to the `STDOUT`
++  pipe *and* the normal graphical terminal display continues to be rendered, so
++  browser clients still work. Use this when a connection may be viewed both
++  graphically and by a text/CLI client.
++
++* `text-output=raw` — **headless** mode: the graphical terminal is not rendered
++  at all. The raw bytes are delivered only via the `STDOUT` pipe, skipping the
++  terminal emulator and its graphical instruction stream. This eliminates the
++  per-frame glyph rasterization/encoding and the graphical bytes on the wire, at
++  the cost of no usable graphical display. Use this for connections consumed
++  solely by a text/CLI client.
++
++Any other value (including `false` or omission) leaves text-output disabled.
+ 
+ Supported protocols
+ -------------------
+ 
+-* SSH: `text-output=true`
+-* Telnet: `text-output=true`
+-* Kubernetes: `text-output=true`
++* SSH: `text-output=true` | `text-output=raw`
++* Telnet: `text-output=true` | `text-output=raw`
++* Kubernetes: `text-output=true` | `text-output=raw`
+ 
+ The parameter is intentionally opt-in. Existing connections continue to behave
+ normally unless the parameter is explicitly enabled.
+diff --git a/src/protocols/kubernetes/io.c b/src/protocols/kubernetes/io.c
+index c167920e..db33341c 100644
+--- a/src/protocols/kubernetes/io.c
++++ b/src/protocols/kubernetes/io.c
+@@ -45,7 +45,12 @@ void guac_kubernetes_receive_data(guac_client* client,
+             /* Tee the raw remote byte stream to the text-output pipe, if
+              * enabled. Has no effect unless text-output mode opened the pipe. */
+             guac_terminal_text_output_write(kubernetes_client->term, buffer, length);
+-            guac_terminal_write(kubernetes_client->term, buffer, length);
++
++            /* In raw text-output mode the graphical terminal is not rendered:
++             * the remote bytes are delivered only via the text-output pipe,
++             * skipping the terminal emulator and its graphical output. */
++            if (!kubernetes_client->settings->text_output_raw)
++                guac_terminal_write(kubernetes_client->term, buffer, length);
+             break;
+ 
+         /* Ignore data on other channels */
+diff --git a/src/protocols/kubernetes/kubernetes.c b/src/protocols/kubernetes/kubernetes.c
+index 27757f13..5f6f8119 100644
+--- a/src/protocols/kubernetes/kubernetes.c
++++ b/src/protocols/kubernetes/kubernetes.c
+@@ -327,7 +327,8 @@ void* guac_kubernetes_client_thread(void* data) {
+                     "requested but is being ignored because copying from the "
+                     "terminal is disabled (\"disable-copy\").");
+         else
+-            guac_terminal_text_output_open(kubernetes_client->term, "STDOUT");
++            guac_terminal_text_output_open(kubernetes_client->term, "STDOUT",
++                    settings->text_output_raw);
+     }
+ 
+     /* Init libwebsockets context creation parameters */
+diff --git a/src/protocols/kubernetes/settings.c b/src/protocols/kubernetes/settings.c
+index e18a7b9b..601ccf84 100644
+--- a/src/protocols/kubernetes/settings.c
++++ b/src/protocols/kubernetes/settings.c
+@@ -26,6 +26,7 @@
+ #include <guacamole/user.h>
+ 
+ #include <stdlib.h>
++#include <string.h>
+ 
+ /* Client plugin arguments */
+ const char* GUAC_KUBERNETES_CLIENT_ARGS[] = {
+@@ -507,9 +508,17 @@ guac_kubernetes_settings* guac_kubernetes_parse_args(guac_user* user,
+         guac_user_parse_args_string(user, GUAC_KUBERNETES_CLIENT_ARGS, argv,
+                 IDX_TERMINAL_TYPE, "linux");
+     /* Parse raw text-output mode flag */
+-    settings->text_output =
+-        guac_user_parse_args_boolean(user, GUAC_KUBERNETES_CLIENT_ARGS, argv,
+-                IDX_TEXT_OUTPUT, false);
++    /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
++     * is preserved for browser clients) or "raw" (headless: the graphical
++     * terminal is not rendered, eliminating the graphical instruction stream
++     * and its rendering cost). Any other value disables text-output. */
++    char* text_output_mode =
++        guac_user_parse_args_string(user, GUAC_KUBERNETES_CLIENT_ARGS, argv,
++                IDX_TEXT_OUTPUT, "false");
++    settings->text_output_raw = (strcmp(text_output_mode, "raw") == 0);
++    settings->text_output = settings->text_output_raw
++            || (strcmp(text_output_mode, "true") == 0);
++    guac_mem_free(text_output_mode);
+ 
+     /* Parsing was successful */
+     return settings;
+diff --git a/src/protocols/kubernetes/settings.h b/src/protocols/kubernetes/settings.h
+index 428e2d97..66a5a287 100644
+--- a/src/protocols/kubernetes/settings.h
++++ b/src/protocols/kubernetes/settings.h
+@@ -194,6 +194,16 @@ typedef struct guac_kubernetes_settings {
+      */
+     bool text_output;
+ 
++    /**
++     * Whether text-output should run in "raw" (headless) mode. When set, the
++     * graphical terminal is not rendered from remote output: the raw bytes are
++     * delivered only via the text-output pipe, skipping the terminal emulator
++     * and its (CPU- and bandwidth-heavy) graphical instruction stream. Implies
++     * text_output. Intended for connections consumed solely by a text/CLI
++     * client, where nothing renders the graphical display.
++     */
++    bool text_output_raw;
++
+     /**
+      * The path in which the typescript should be saved, if enabled. If no
+      * typescript should be saved, this will be NULL.
+diff --git a/src/protocols/ssh/settings.c b/src/protocols/ssh/settings.c
+index 73f2fe7a..f00f8de6 100644
+--- a/src/protocols/ssh/settings.c
++++ b/src/protocols/ssh/settings.c
+@@ -633,9 +633,17 @@ guac_ssh_settings* guac_ssh_parse_args(guac_user* user,
+                 IDX_DISABLE_PASTE, false);
+ 
+     /* Parse raw text-output mode flag */
+-    settings->text_output =
+-        guac_user_parse_args_boolean(user, GUAC_SSH_CLIENT_ARGS, argv,
+-                IDX_TEXT_OUTPUT, false);
++    /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
++     * is preserved for browser clients) or "raw" (headless: the graphical
++     * terminal is not rendered, eliminating the graphical instruction stream
++     * and its rendering cost). Any other value disables text-output. */
++    char* text_output_mode =
++        guac_user_parse_args_string(user, GUAC_SSH_CLIENT_ARGS, argv,
++                IDX_TEXT_OUTPUT, "false");
++    settings->text_output_raw = (strcmp(text_output_mode, "raw") == 0);
++    settings->text_output = settings->text_output_raw
++            || (strcmp(text_output_mode, "true") == 0);
++    guac_mem_free(text_output_mode);
+ 
+     /* Parse Wake-on-LAN (WoL) parameters. */
+     settings->wol_send_packet =
+diff --git a/src/protocols/ssh/settings.h b/src/protocols/ssh/settings.h
+index b738c880..828872f3 100644
+--- a/src/protocols/ssh/settings.h
++++ b/src/protocols/ssh/settings.h
+@@ -189,6 +189,16 @@ typedef struct guac_ssh_settings {
+      */
+     bool text_output;
+ 
++    /**
++     * Whether text-output should run in "raw" (headless) mode. When set, the
++     * graphical terminal is not rendered from remote output: the raw bytes are
++     * delivered only via the text-output pipe, skipping the terminal emulator
++     * and its (CPU- and bandwidth-heavy) graphical instruction stream. Implies
++     * text_output. Intended for connections consumed solely by a text/CLI
++     * client, where nothing renders the graphical display.
++     */
++    bool text_output_raw;
++
+     /**
+      * Whether SFTP is enabled.
+      */
+diff --git a/src/protocols/ssh/ssh.c b/src/protocols/ssh/ssh.c
+index af3b68c5..dda8d807 100644
+--- a/src/protocols/ssh/ssh.c
++++ b/src/protocols/ssh/ssh.c
+@@ -354,7 +354,8 @@ void* ssh_client_thread(void* data) {
+                     "requested but is being ignored because copying from the "
+                     "terminal is disabled (\"disable-copy\").");
+         else
+-            guac_terminal_text_output_open(ssh_client->term, "STDOUT");
++            guac_terminal_text_output_open(ssh_client->term, "STDOUT",
++                    settings->text_output_raw);
+     }
+ 
+     /* Get user and credentials */
+@@ -563,9 +564,14 @@ void* ssh_client_thread(void* data) {
+              * Has no effect unless text-output mode opened the pipe. */
+             guac_terminal_text_output_write(ssh_client->term, buffer, bytes_read);
+ 
+-            int written = guac_terminal_write(ssh_client->term, buffer, bytes_read);
+-            if (written < 0)
+-                break;
++            /* In raw text-output mode the graphical terminal is not rendered:
++             * the remote bytes are delivered only via the text-output pipe,
++             * skipping the terminal emulator and its graphical output. */
++            if (!settings->text_output_raw) {
++                int written = guac_terminal_write(ssh_client->term, buffer, bytes_read);
++                if (written < 0)
++                    break;
++            }
+ 
+             total_read += bytes_read;
+         }
+diff --git a/src/protocols/telnet/settings.c b/src/protocols/telnet/settings.c
+index a2f586dc..748b2f18 100644
+--- a/src/protocols/telnet/settings.c
++++ b/src/protocols/telnet/settings.c
+@@ -598,9 +598,17 @@ guac_telnet_settings* guac_telnet_parse_args(guac_user* user,
+                 IDX_DISABLE_PASTE, false);
+ 
+     /* Parse raw text-output mode flag */
+-    settings->text_output =
+-        guac_user_parse_args_boolean(user, GUAC_TELNET_CLIENT_ARGS, argv,
+-                IDX_TEXT_OUTPUT, false);
++    /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
++     * is preserved for browser clients) or "raw" (headless: the graphical
++     * terminal is not rendered, eliminating the graphical instruction stream
++     * and its rendering cost). Any other value disables text-output. */
++    char* text_output_mode =
++        guac_user_parse_args_string(user, GUAC_TELNET_CLIENT_ARGS, argv,
++                IDX_TEXT_OUTPUT, "false");
++    settings->text_output_raw = (strcmp(text_output_mode, "raw") == 0);
++    settings->text_output = settings->text_output_raw
++            || (strcmp(text_output_mode, "true") == 0);
++    guac_mem_free(text_output_mode);
+ 
+     /* Parse Wake-on-LAN (WoL) settings */
+     settings->wol_send_packet =
+diff --git a/src/protocols/telnet/settings.h b/src/protocols/telnet/settings.h
+index 2dc7a11c..98740c79 100644
+--- a/src/protocols/telnet/settings.h
++++ b/src/protocols/telnet/settings.h
+@@ -197,6 +197,16 @@ typedef struct guac_telnet_settings {
+      */
+     bool text_output;
+ 
++    /**
++     * Whether text-output should run in "raw" (headless) mode. When set, the
++     * graphical terminal is not rendered from remote output: the raw bytes are
++     * delivered only via the text-output pipe, skipping the terminal emulator
++     * and its (CPU- and bandwidth-heavy) graphical instruction stream. Implies
++     * text_output. Intended for connections consumed solely by a text/CLI
++     * client, where nothing renders the graphical display.
++     */
++    bool text_output_raw;
++
+     /**
+      * The path in which the typescript should be saved, if enabled. If no
+      * typescript should be saved, this will be NULL.
+diff --git a/src/protocols/telnet/telnet.c b/src/protocols/telnet/telnet.c
+index d8b6c3d4..8f8e0416 100644
+--- a/src/protocols/telnet/telnet.c
++++ b/src/protocols/telnet/telnet.c
+@@ -283,7 +283,13 @@ static void __guac_telnet_event_handler(telnet_t* telnet, telnet_event_t* event,
+             /* Tee the raw remote byte stream to the text-output pipe, if
+              * enabled. Has no effect unless text-output mode opened the pipe. */
+             guac_terminal_text_output_write(telnet_client->term, event->data.buffer, event->data.size);
+-            guac_terminal_write(telnet_client->term, event->data.buffer, event->data.size);
++
++            /* In raw text-output mode the graphical terminal is not rendered:
++             * the remote bytes are delivered only via the text-output pipe,
++             * skipping the terminal emulator and its graphical output. */
++            if (!settings->text_output_raw)
++                guac_terminal_write(telnet_client->term, event->data.buffer, event->data.size);
++
+             guac_telnet_search(client, event->data.buffer, event->data.size);
+             break;
+ 
+@@ -619,7 +625,8 @@ void* guac_telnet_client_thread(void* data) {
+                     "requested but is being ignored because copying from the "
+                     "terminal is disabled (\"disable-copy\").");
+         else
+-            guac_terminal_text_output_open(telnet_client->term, "STDOUT");
++            guac_terminal_text_output_open(telnet_client->term, "STDOUT",
++                    settings->text_output_raw);
+     }
+ 
+     /* Open telnet session */
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 8da76bed..75b814d9 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3221,7 +3221,8 @@ static void* guac_terminal_text_output_close_owner(guac_user* owner, void* data)
+ 
+ }
+ 
+-void guac_terminal_text_output_open(guac_terminal* term, const char* name) {
++void guac_terminal_text_output_open(guac_terminal* term, const char* name,
++        int flush_immediately) {
+ 
+     guac_client* client = term->client;
+ 
+@@ -3232,6 +3233,7 @@ void guac_terminal_text_output_open(guac_terminal* term, const char* name) {
+ 
+     term->text_output_length = 0;
+     term->text_output_inflight = 0;
++    term->text_output_flush_immediately = flush_immediately;
+ 
+     /* Allocate and open the stream on the connection owner's socket, so raw
+      * output is delivered only to the owner (not broadcast to every user) and
+@@ -3281,6 +3283,11 @@ void guac_terminal_text_output_write(guac_terminal* term,
+ 
+         }
+ 
++        /* In raw (headless) mode there is no graphical frame cycle to flush the
++         * buffer, so flush immediately as data arrives. */
++        if (term->text_output_flush_immediately)
++            guac_terminal_text_output_flush(term);
++
+     }
+ 
+     guac_terminal_unlock(term);
+diff --git a/src/terminal/terminal/terminal-priv.h b/src/terminal/terminal/terminal-priv.h
+index 5829b463..b3deed68 100644
+--- a/src/terminal/terminal/terminal-priv.h
++++ b/src/terminal/terminal/terminal-priv.h
+@@ -185,6 +185,16 @@ struct guac_terminal {
+      */
+     int text_output_inflight;
+ 
++    /**
++     * Whether buffered text-output should be flushed immediately as it is
++     * written, rather than at terminal frame boundaries. This is required in
++     * raw (headless) text-output mode, where the graphical terminal is not
++     * rendered and thus the frame/render cycle that would otherwise flush the
++     * buffer never runs. When false, flushing is driven by guac_terminal_flush()
++     * (the graphical frame boundary) as usual.
++     */
++    bool text_output_flush_immediately;
++
+     /**
+      * The currently-active typescript recording all terminal output, or NULL
+      * if no typescript is being used for the terminal session.
+diff --git a/src/terminal/terminal/terminal.h b/src/terminal/terminal/terminal.h
+index 29ab0f61..fc5dd40f 100644
+--- a/src/terminal/terminal/terminal.h
++++ b/src/terminal/terminal/terminal.h
+@@ -1035,8 +1035,15 @@ int guac_terminal_write(guac_terminal* term, const char* buffer, int length);
+  *
+  * @param name
+  *     The name of the pipe stream to open (e.g. "STDOUT").
++ *
++ * @param flush_immediately
++ *     Non-zero if buffered output should be flushed immediately as it is
++ *     written rather than at terminal frame boundaries. This is required in
++ *     raw (headless) mode, where the graphical frame/render cycle that would
++ *     otherwise drive flushing does not run.
+  */
+-void guac_terminal_text_output_open(guac_terminal* term, const char* name);
++void guac_terminal_text_output_open(guac_terminal* term, const char* name,
++        int flush_immediately);
+ 
+ /**
+  * Writes a block of raw bytes to the text-output pipe stream currently open
+diff --git a/util/manual-tests/text-output-e2e.sh b/util/manual-tests/text-output-e2e.sh
+index ed38f2b1..40786754 100755
+--- a/util/manual-tests/text-output-e2e.sh
++++ b/util/manual-tests/text-output-e2e.sh
+@@ -127,5 +127,35 @@ python3 "$DRIVER" kubernetes \
+ check $?
+ pkill -f "$MOCK" 2>/dev/null
+ 
++# =========================== RAW MODE ===========================
++# text-output=raw is headless: the graphical terminal is not rendered, so the
++# raw bytes are still delivered via the STDOUT pipe while the graphical
++# instruction stream is suppressed (graphics bytes stay at the tiny init
++# residual, well under the --max-graphics bound).
++
++hr "RAW SSH: text delivered, graphics suppressed"
++python3 "$DRIVER" ssh \
++  "{\"hostname\":\"$SSH_HOST\",\"port\":\"$SSH_PORT\",\"username\":\"$SSH_USER\",\"password\":\"$SSH_PASS\",\"text-output\":\"raw\",\"command\":\"printf '\\\\033[31mRAW-SSH marker\\\\033[0m\\\\r\\\\n'; sleep 2\"}" \
++  --secs 10 --expect "RAW-SSH marker" --max-graphics 5000
++check $?
++
++hr "RAW TELNET: text delivered, graphics suppressed"
++pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null; sleep 0.3
++socat TCP-LISTEN:"$TELNET_PORT",reuseaddr,fork EXEC:"$ANSI",pty,stderr & sleep 0.5
++python3 "$DRIVER" telnet \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$TELNET_PORT\",\"text-output\":\"raw\"}" \
++  --secs 8 --expect "TELNET-TEXT-OUTPUT marker" --max-graphics 5000
++check $?
++pkill -f "TCP-LISTEN:$TELNET_PORT" 2>/dev/null
++
++hr "RAW KUBERNETES: 60-line flood delivered, graphics suppressed"
++pkill -f "$MOCK" 2>/dev/null; sleep 0.3
++python3 "$MOCK" "$K8S_PORT" 60 >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$DRIVER" kubernetes \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"raw\"}" \
++  --secs 12 --expect "K8S-TEXT-OUTPUT line 59" --max-graphics 5000
++check $?
++pkill -f "$MOCK" 2>/dev/null
++
+ hr "OVERALL: $([ $RESULT -eq 0 ] && echo ALL-PASS || echo SOME-FAILED)"
+ exit $RESULT
+diff --git a/util/manual-tests/text-output-guacd-e2e.py b/util/manual-tests/text-output-guacd-e2e.py
+index 4dc2853f..1550c145 100755
+--- a/util/manual-tests/text-output-guacd-e2e.py
++++ b/util/manual-tests/text-output-guacd-e2e.py
+@@ -24,6 +24,9 @@ Options:
+     --expect-absent S   Require S to NOT appear (e.g. to show dropped output
+                         under backpressure when combined with --no-ack).
+     --expect-no-pipe    Pass only if NO STDOUT pipe is opened (negative test).
++    --max-graphics N    Require graphical-instruction bytes (img/blob/rect/...)
++                        to stay at or below N (e.g. to show raw mode suppresses
++                        the graphical stream).
+     --no-ack            Do not acknowledge blobs, to exercise flow control.
+ 
+ Example:
+@@ -48,6 +51,12 @@ def enc(*elems):
+     return ",".join("%d.%s" % (len(e), e) for e in elems) + ";"
+ 
+ 
++def enc_len(elems):
++    """Exact on-wire byte length of an instruction, from its (bytes) elements."""
++    n = sum(len(str(len(e))) + 1 + len(e) for e in elems)  # "LEN" + "." + value
++    return n + (len(elems) - 1) + 1                          # commas + ';'
++
++
+ class Parser:
+     """Incremental parser for the Guacamole instruction stream."""
+ 
+@@ -98,6 +107,7 @@ def main():
+     expect_absent = None
+     expect_no_pipe = False
+     no_ack = False
++    max_graphics = None
+     a = sys.argv[3:]
+     for j, v in enumerate(a):
+         if v == "--secs":
+@@ -108,6 +118,8 @@ def main():
+             expect_absent = a[j + 1]
+         elif v == "--expect-no-pipe":
+             expect_no_pipe = True
++        elif v == "--max-graphics":
++            max_graphics = int(a[j + 1])
+         elif v == "--no-ack":
+             no_ack = True
+ 
+@@ -150,6 +162,8 @@ def main():
+     stdout_idx = None
+     captured = bytearray()
+     pipe_seen = False
++    graphics_bytes = 0
++    control_ops = ("sync", "ready", "args", "nop", "disconnect", "error")
+     deadline = time.time() + secs
+     s.settimeout(1.0)
+     while time.time() < deadline:
+@@ -163,6 +177,13 @@ def main():
+         p.feed(data)
+         for inst in p:
+             op = inst[0].decode(errors="replace")
++            # Graphics accounting: anything that is neither the STDOUT text pipe
++            # nor a control/handshake instruction is graphical output.
++            is_stdout = (op == "pipe" and len(inst) > 3 and inst[3] == b"STDOUT") \
++                or (op in ("blob", "end") and stdout_idx is not None
++                    and inst[1].decode() == stdout_idx)
++            if op not in control_ops and not is_stdout:
++                graphics_bytes += enc_len(inst)
+             if op == "sync":
+                 # Echo sync to keep guacd's frame loop (and pipe flushing) alive.
+                 ts = inst[1].decode() if len(inst) > 1 else "0"
+@@ -191,6 +212,7 @@ def main():
+     snippet = re.sub(r"[\x00-\x08\x0e-\x1f]", ".",
+                      captured.decode("utf-8", errors="replace"))[:400]
+     print("snippet            : %r" % snippet)
++    print("graphics bytes     : %d" % graphics_bytes)
+ 
+     if expect_no_pipe:
+         ok = not pipe_seen
+@@ -205,6 +227,10 @@ def main():
+             absent = expect_absent.encode() not in captured
+             print("expect absent %r : %s" % (expect_absent, absent))
+             ok = ok and absent
++    if max_graphics is not None:
++        within = graphics_bytes <= max_graphics
++        print("graphics <= %-6d : %s" % (max_graphics, within))
++        ok = ok and within
+     print("VERDICT            : %s" % ("PASS" if ok else "FAIL"))
+     sys.exit(0 if ok else 1)
+ 
+-- 
+2.54.0
+
+
+From 0833667f1771dec4a45977b227fc877adcf46758 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Tue, 21 Jul 2026 23:59:51 -0300
+Subject: [PATCH 10/11] Handle text-output backpressure safely
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/terminal.c | 26 +++++++++++++++-----------
+ 1 file changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 75b814d9..1183bde0 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3160,12 +3160,19 @@ static void* guac_terminal_text_output_flush_owner(guac_user* owner, void* data)
+     if (term->text_output_stream != NULL && term->text_output_length > 0) {
+ 
+         /* Apply backpressure: if too many blobs are outstanding, the consumer
+-         * is not keeping up. Drop this buffered output rather than sending it,
+-         * bounding memory use. Output is dropped (not blocked) because in tee
+-         * mode this raw stream shares the protocol read loop with the graphical
+-         * display, and blocking the source would stall any browser user too. */
++         * is not keeping up. Tee mode remains best-effort and drops buffered
++         * raw output rather than stalling browser users that share the same
++         * protocol read loop. Raw/headless mode is CLI-facing and byte-oriented;
++         * fail fast instead of silently corrupting the stream. */
+         if (term->text_output_inflight >= GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT) {
+-            guac_client_log(term->client, GUAC_LOG_DEBUG, "Dropping %i bytes of "
++            if (term->text_output_flush_immediately) {
++                guac_client_abort(term->client, GUAC_PROTOCOL_STATUS_SERVER_ERROR,
++                        "text-output consumer is not keeping up");
++                term->text_output_length = 0;
++                return NULL;
++            }
++
++            guac_client_log(term->client, GUAC_LOG_WARNING, "Dropping %i bytes of "
+                     "text-output: consumer is not keeping up (%i blobs "
+                     "outstanding).", term->text_output_length,
+                     term->text_output_inflight);
+@@ -3252,14 +3259,11 @@ void guac_terminal_text_output_open(guac_terminal* term, const char* name,
+ void guac_terminal_text_output_write(guac_terminal* term,
+         const char* buffer, int length) {
+ 
+-    /* Ignore if no text-output stream is open (fast path, re-checked under
+-     * lock below) */
+-    if (term->text_output_stream == NULL)
+-        return;
+-
+     guac_terminal_lock(term);
+ 
+-    /* Append data only if the stream is still open */
++    /* Append data only if the stream is open. This check must happen under the
++     * terminal lock: owner-disconnect and close paths mutate text_output_stream
++     * while holding the same lock. */
+     if (term->text_output_stream != NULL) {
+ 
+         while (length > 0) {
+-- 
+2.54.0
+
+
+From 27f665c4a9e0078540b8e1c448a615e2a812cce7 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 03:27:33 -0300
+Subject: [PATCH 11/11] Add text-output flow-control tests
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/protocols/kubernetes/kubernetes.c         |  17 +-
+ src/protocols/ssh/ssh.c                       |  17 +-
+ src/protocols/telnet/telnet.c                 |  17 +-
+ src/terminal/terminal.c                       |  13 +-
+ src/terminal/terminal/terminal-priv.h         |   7 +
+ src/terminal/terminal/terminal.h              |  16 ++
+ src/terminal/tests/Makefile.am                |   3 +-
+ src/terminal/tests/text-output/flow-control.c | 239 ++++++++++++++++++
+ 8 files changed, 292 insertions(+), 37 deletions(-)
+ create mode 100644 src/terminal/tests/text-output/flow-control.c
+
+diff --git a/src/protocols/kubernetes/kubernetes.c b/src/protocols/kubernetes/kubernetes.c
+index 5f6f8119..ff30e5ad 100644
+--- a/src/protocols/kubernetes/kubernetes.c
++++ b/src/protocols/kubernetes/kubernetes.c
+@@ -321,15 +321,14 @@ void* guac_kubernetes_client_thread(void* data) {
+      * in addition to the normal graphical display. As text-output is
+      * effectively a copy/exfiltration channel, it is gated behind
+      * disable-copy. */
+-    if (settings->text_output) {
+-        if (settings->disable_copy)
+-            guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
+-                    "requested but is being ignored because copying from the "
+-                    "terminal is disabled (\"disable-copy\").");
+-        else
+-            guac_terminal_text_output_open(kubernetes_client->term, "STDOUT",
+-                    settings->text_output_raw);
+-    }
++    if (guac_terminal_text_output_should_open(settings->text_output,
++                settings->disable_copy))
++        guac_terminal_text_output_open(kubernetes_client->term, "STDOUT",
++                settings->text_output_raw);
++    else if (settings->text_output)
++        guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
++                "requested but is being ignored because copying from the "
++                "terminal is disabled (\"disable-copy\").");
+ 
+     /* Init libwebsockets context creation parameters */
+     struct lws_context_creation_info context_info = {
+diff --git a/src/protocols/ssh/ssh.c b/src/protocols/ssh/ssh.c
+index dda8d807..621b7ab4 100644
+--- a/src/protocols/ssh/ssh.c
++++ b/src/protocols/ssh/ssh.c
+@@ -348,15 +348,14 @@ void* ssh_client_thread(void* data) {
+      * in addition to the normal graphical display. As text-output is
+      * effectively a copy/exfiltration channel, it is gated behind
+      * disable-copy. */
+-    if (settings->text_output) {
+-        if (settings->disable_copy)
+-            guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
+-                    "requested but is being ignored because copying from the "
+-                    "terminal is disabled (\"disable-copy\").");
+-        else
+-            guac_terminal_text_output_open(ssh_client->term, "STDOUT",
+-                    settings->text_output_raw);
+-    }
++    if (guac_terminal_text_output_should_open(settings->text_output,
++                settings->disable_copy))
++        guac_terminal_text_output_open(ssh_client->term, "STDOUT",
++                settings->text_output_raw);
++    else if (settings->text_output)
++        guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
++                "requested but is being ignored because copying from the "
++                "terminal is disabled (\"disable-copy\").");
+ 
+     /* Get user and credentials */
+     ssh_client->user = guac_ssh_get_user(client);
+diff --git a/src/protocols/telnet/telnet.c b/src/protocols/telnet/telnet.c
+index 8f8e0416..d639773e 100644
+--- a/src/protocols/telnet/telnet.c
++++ b/src/protocols/telnet/telnet.c
+@@ -619,15 +619,14 @@ void* guac_telnet_client_thread(void* data) {
+      * in addition to the normal graphical display. As text-output is
+      * effectively a copy/exfiltration channel, it is gated behind
+      * disable-copy. */
+-    if (settings->text_output) {
+-        if (settings->disable_copy)
+-            guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
+-                    "requested but is being ignored because copying from the "
+-                    "terminal is disabled (\"disable-copy\").");
+-        else
+-            guac_terminal_text_output_open(telnet_client->term, "STDOUT",
+-                    settings->text_output_raw);
+-    }
++    if (guac_terminal_text_output_should_open(settings->text_output,
++                settings->disable_copy))
++        guac_terminal_text_output_open(telnet_client->term, "STDOUT",
++                settings->text_output_raw);
++    else if (settings->text_output)
++        guac_client_log(client, GUAC_LOG_WARNING, "\"text-output\" was "
++                "requested but is being ignored because copying from the "
++                "terminal is disabled (\"disable-copy\").");
+ 
+     /* Open telnet session */
+     telnet_client->telnet = __guac_telnet_create_session(client);
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 1183bde0..290c1740 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3021,15 +3021,6 @@ void guac_terminal_pipe_stream_close(guac_terminal* term) {
+ 
+ }
+ 
+-/**
+- * The maximum number of text-output blobs that may be outstanding (sent to the
+- * connection owner but not yet acknowledged) before further buffered output is
+- * dropped. This bounds the backlog devoted to a stalled text-output consumer.
+- * At up to sizeof(text_output_buffer) bytes per blob, 16 outstanding blobs is
+- * on the order of 96 KB.
+- */
+-#define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT 16
+-
+ /**
+  * Handler for "ack" instructions received on the text-output stream. Each
+  * acknowledged blob decrements the count of outstanding blobs, permitting
+@@ -3228,6 +3219,10 @@ static void* guac_terminal_text_output_close_owner(guac_user* owner, void* data)
+ 
+ }
+ 
++int guac_terminal_text_output_should_open(int text_output, int disable_copy) {
++    return text_output && !disable_copy;
++}
++
+ void guac_terminal_text_output_open(guac_terminal* term, const char* name,
+         int flush_immediately) {
+ 
+diff --git a/src/terminal/terminal/terminal-priv.h b/src/terminal/terminal/terminal-priv.h
+index b3deed68..776a3021 100644
+--- a/src/terminal/terminal/terminal-priv.h
++++ b/src/terminal/terminal/terminal-priv.h
+@@ -37,6 +37,13 @@
+  */
+ #define GUAC_TERMINAL_MODIFIED 1
+ 
++/**
++ * The maximum number of text-output blobs that may be outstanding (sent to the
++ * connection owner but not yet acknowledged) before further buffered output is
++ * dropped or, in raw/headless mode, the connection is aborted.
++ */
++#define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT 16
++
+ /**
+  * Handler for characters printed to the terminal. When a character is printed,
+  * the current char handler for the terminal is called and given that
+diff --git a/src/terminal/terminal/terminal.h b/src/terminal/terminal/terminal.h
+index fc5dd40f..e13bddd1 100644
+--- a/src/terminal/terminal/terminal.h
++++ b/src/terminal/terminal/terminal.h
+@@ -1045,6 +1045,22 @@ int guac_terminal_write(guac_terminal* term, const char* buffer, int length);
+ void guac_terminal_text_output_open(guac_terminal* term, const char* name,
+         int flush_immediately);
+ 
++/**
++ * Returns whether a text-output stream should be opened under the given
++ * terminal policy settings. Text-output is a machine-readable copy channel and
++ * must not be opened when copying from the terminal is disabled.
++ *
++ * @param text_output
++ *     Whether text-output was requested for the connection.
++ *
++ * @param disable_copy
++ *     Whether copying from the terminal has been disabled.
++ *
++ * @return
++ *     Non-zero if text-output should be opened, zero otherwise.
++ */
++int guac_terminal_text_output_should_open(int text_output, int disable_copy);
++
+ /**
+  * Writes a block of raw bytes to the text-output pipe stream currently open
+  * and associated with the given terminal. The text-output stream must already
+diff --git a/src/terminal/tests/Makefile.am b/src/terminal/tests/Makefile.am
+index a392984d..00a89afd 100644
+--- a/src/terminal/tests/Makefile.am
++++ b/src/terminal/tests/Makefile.am
+@@ -38,7 +38,8 @@ TESTS = $(check_PROGRAMS)
+ test_terminal_SOURCES =            \
+     selection-point/enclose-text.c \
+     selection-point/point-after.c  \
+-    selection-point/rounding.c
++    selection-point/rounding.c     \
++    text-output/flow-control.c
+ 
+ test_terminal_CFLAGS =      \
+     -Werror -Wall -pedantic \
+diff --git a/src/terminal/tests/text-output/flow-control.c b/src/terminal/tests/text-output/flow-control.c
+new file mode 100644
+index 00000000..85863630
+--- /dev/null
++++ b/src/terminal/tests/text-output/flow-control.c
+@@ -0,0 +1,239 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++
++#include "terminal/terminal.h"
++#include "terminal/terminal-priv.h"
++
++#include <CUnit/CUnit.h>
++#include <guacamole/client.h>
++#include <guacamole/mem.h>
++#include <guacamole/protocol-constants.h>
++#include <guacamole/socket.h>
++#include <guacamole/stream.h>
++#include <guacamole/user.h>
++
++#include <pthread.h>
++#include <stdarg.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++/**
++ * Test fixture for the text-output helpers. Only the fields used by the
++ * text-output implementation are initialized, avoiding the full terminal render
++ * thread while still exercising real guac_client_for_owner(), user streams,
++ * ACK handlers, and protocol serialization.
++ */
++typedef struct text_output_fixture {
++    guac_client* client;
++    guac_user* owner;
++    guac_terminal* term;
++    int read_fd;
++    int write_fd;
++    guac_client_log_level last_log_level;
++    int log_count;
++} text_output_fixture;
++
++static void capture_log(guac_client* client, guac_client_log_level level,
++        const char* format, va_list ap) {
++
++    text_output_fixture* fixture = (text_output_fixture*) client->data;
++    fixture->last_log_level = level;
++    fixture->log_count++;
++
++}
++
++static text_output_fixture* text_output_fixture_alloc(void) {
++
++    int pipe_fds[2];
++    CU_ASSERT_EQUAL_FATAL(pipe(pipe_fds), 0);
++
++    text_output_fixture* fixture = guac_mem_zalloc(sizeof(text_output_fixture));
++    fixture->read_fd = pipe_fds[0];
++    fixture->write_fd = pipe_fds[1];
++
++    fixture->client = guac_client_alloc();
++    CU_ASSERT_PTR_NOT_NULL_FATAL(fixture->client);
++    fixture->client->data = fixture;
++    fixture->client->log_handler = capture_log;
++
++    fixture->owner = guac_user_alloc();
++    CU_ASSERT_PTR_NOT_NULL_FATAL(fixture->owner);
++    fixture->owner->owner = 1;
++    fixture->owner->socket = guac_socket_open(fixture->write_fd);
++    CU_ASSERT_PTR_NOT_NULL_FATAL(fixture->owner->socket);
++    fixture->client->__owner = fixture->owner;
++
++    fixture->term = guac_mem_zalloc(sizeof(guac_terminal));
++    fixture->term->client = fixture->client;
++    pthread_mutex_init(&fixture->term->lock, NULL);
++
++    return fixture;
++
++}
++
++static void text_output_fixture_free(text_output_fixture* fixture) {
++
++    if (fixture->term != NULL) {
++        guac_terminal_text_output_close(fixture->term);
++        pthread_mutex_destroy(&fixture->term->lock);
++        guac_mem_free(fixture->term);
++    }
++
++    if (fixture->owner != NULL) {
++        if (fixture->owner->socket != NULL)
++            guac_socket_free(fixture->owner->socket);
++        guac_user_free(fixture->owner);
++    }
++
++    if (fixture->client != NULL) {
++        fixture->client->__owner = NULL;
++        guac_client_free(fixture->client);
++    }
++
++    if (fixture->read_fd != -1)
++        close(fixture->read_fd);
++
++    guac_mem_free(fixture);
++
++}
++
++static char* text_output_fixture_read(text_output_fixture* fixture) {
++
++    guac_socket_free(fixture->owner->socket);
++    fixture->owner->socket = NULL;
++
++    char* buffer = guac_mem_zalloc(8192);
++    int offset = 0;
++    int numread;
++
++    while ((numread = read(fixture->read_fd, buffer + offset,
++                    8191 - offset)) > 0)
++        offset += numread;
++
++    buffer[offset] = '\0';
++    close(fixture->read_fd);
++    fixture->read_fd = -1;
++
++    return buffer;
++
++}
++
++void test_text_output__disable_copy_blocks_open(void) {
++
++    CU_ASSERT_FALSE(guac_terminal_text_output_should_open(0, 0));
++    CU_ASSERT_FALSE(guac_terminal_text_output_should_open(0, 1));
++    CU_ASSERT_TRUE(guac_terminal_text_output_should_open(1, 0));
++    CU_ASSERT_FALSE(guac_terminal_text_output_should_open(1, 1));
++
++}
++
++void test_text_output__opens_owner_stream_and_acks_blobs(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 0);
++    CU_ASSERT_PTR_NOT_NULL_FATAL(fixture->term->text_output_stream);
++    CU_ASSERT_EQUAL(fixture->term->text_output_stream->index % 2, 0);
++    CU_ASSERT_PTR_EQUAL(fixture->term->text_output_stream->data, fixture->term);
++    CU_ASSERT_PTR_NOT_NULL(fixture->term->text_output_stream->ack_handler);
++
++    guac_terminal_text_output_write(fixture->term, "hello", 5);
++    guac_terminal_lock(fixture->term);
++    guac_terminal_text_output_flush(fixture->term);
++    guac_terminal_unlock(fixture->term);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 1);
++
++    fixture->term->text_output_stream->ack_handler(fixture->owner,
++            fixture->term->text_output_stream, "OK",
++            GUAC_PROTOCOL_STATUS_SUCCESS);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 0);
++
++    guac_terminal_text_output_close(fixture->term);
++    char* instructions = text_output_fixture_read(fixture);
++
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions,
++                "4.pipe,1.0,24.application/octet-stream,6.STDOUT;"));
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions,
++                "4.blob,1.0,8.aGVsbG8=;"));
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions, "3.end,1.0;"));
++
++    guac_mem_free(instructions);
++    text_output_fixture_free(fixture);
++
++}
++
++void test_text_output__tee_mode_drops_when_consumer_stalls(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 0);
++    fixture->term->text_output_inflight = GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
++
++    guac_terminal_text_output_write(fixture->term, "drop", 4);
++    guac_terminal_lock(fixture->term);
++    guac_terminal_text_output_flush(fixture->term);
++    guac_terminal_unlock(fixture->term);
++
++    CU_ASSERT_EQUAL(fixture->client->state, GUAC_CLIENT_RUNNING);
++    CU_ASSERT_EQUAL(fixture->term->text_output_length, 0);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight,
++            GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT);
++    CU_ASSERT_EQUAL(fixture->last_log_level, GUAC_LOG_WARNING);
++
++    guac_terminal_text_output_close(fixture->term);
++    char* instructions = text_output_fixture_read(fixture);
++
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions,
++                "4.pipe,1.0,24.application/octet-stream,6.STDOUT;"));
++    CU_ASSERT_PTR_NULL(strstr(instructions, "4.blob"));
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions, "3.end,1.0;"));
++
++    guac_mem_free(instructions);
++    text_output_fixture_free(fixture);
++
++}
++
++void test_text_output__raw_mode_aborts_when_consumer_stalls(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++    fixture->term->text_output_inflight = GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
++
++    guac_terminal_text_output_write(fixture->term, "abort", 5);
++
++    CU_ASSERT_EQUAL(fixture->client->state, GUAC_CLIENT_STOPPING);
++    CU_ASSERT_EQUAL(fixture->term->text_output_length, 0);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight,
++            GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT);
++    CU_ASSERT_EQUAL(fixture->last_log_level, GUAC_LOG_ERROR);
++
++    guac_terminal_text_output_close(fixture->term);
++    char* instructions = text_output_fixture_read(fixture);
++
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions,
++                "4.pipe,1.0,24.application/octet-stream,6.STDOUT;"));
++    CU_ASSERT_PTR_NULL(strstr(instructions, "4.blob"));
++    CU_ASSERT_PTR_NOT_NULL(strstr(instructions, "3.end,1.0;"));
++
++    guac_mem_free(instructions);
++    text_output_fixture_free(fixture);
++
++}
+-- 
+2.54.0
+

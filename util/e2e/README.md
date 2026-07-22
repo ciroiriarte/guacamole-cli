@@ -17,6 +17,7 @@ It validates:
 - stdout command output returns through the `STDOUT` pipe;
 - `pwd` returns the expected remote directory;
 - ANSI bytes are passed through;
+- high-output stdout floods continue through the `STDOUT` pipe while the CLI drains and ACKs blobs promptly;
 - Ctrl-A reaches readline;
 - Ctrl-C interrupts a foreground process;
 - multiline stdin reaches `cat` and Ctrl-D exits it;
@@ -44,6 +45,8 @@ Useful overrides:
 - `GUA_E2E_TIMEOUT` / `--timeout`: pexpect timeout.
 - `GUA_E2E_RESIZE_ROWS` / `--resize-rows` and `GUA_E2E_RESIZE_COLS` / `--resize-cols`: local PTY size used for resize propagation checks.
 - `GUA_E2E_SKIP_RESIZE` / `--skip-resize`: skip resize assertions.
+- `GUA_E2E_FLOOD_LINES` / `--flood-lines`: number of remote lines emitted for the high-output drain/backpressure assertion.
+- `GUA_E2E_SKIP_FLOOD` / `--skip-flood`: skip the high-output drain/backpressure assertion.
 - `GUA_E2E_SKIP_SIGNAL_PROBES` / `--skip-signal-probes`: skip the extra SIGINT/SIGTERM clean-exit probes.
 
 For security, provide the Guacamole password with `GUA_E2E_PASSWORD`; avoid CLI

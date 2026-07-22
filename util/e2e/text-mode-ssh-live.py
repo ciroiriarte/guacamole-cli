@@ -121,6 +121,18 @@ def parse_args() -> argparse.Namespace:
         help="Skip SIGINT/SIGTERM process-interrupt probes.",
     )
     parser.add_argument(
+        "--flood-lines",
+        type=int,
+        default=int(env_default("GUA_E2E_FLOOD_LINES", "20000")),
+        help="Remote lines emitted for the high-output drain/backpressure check (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--skip-flood",
+        action="store_true",
+        default=env_default("GUA_E2E_SKIP_FLOOD", "").lower() in {"1", "true", "yes"},
+        help="Skip the high-output drain/backpressure assertion.",
+    )
+    parser.add_argument(
         "--keep-state",
         action="store_true",
         help="Keep temporary gua config/token directory for debugging.",
@@ -262,6 +274,19 @@ def run_session(args: argparse.Namespace, env: dict[str, str]) -> E2EResult:
             expect_prompt(child, args.prompt, args.timeout)
             checks.append("ansi_passthrough")
 
+            if not args.skip_flood and args.flood_lines > 0:
+                flood_done = f"GUAC_CLI_FLOOD_DONE_{args.flood_lines}"
+                child.sendline(
+                    "i=0; "
+                    f"while [ $i -lt {args.flood_lines} ]; do "
+                    "printf 'GUAC_CLI_FLOOD_%05d\\n' $i; "
+                    "i=$((i+1)); "
+                    f"done; echo {flood_done}"
+                )
+                child.expect(flood_done, timeout=args.timeout)
+                expect_prompt(child, args.prompt, args.timeout)
+                checks.append(f"stdout_flood_{args.flood_lines}_lines")
+
             # Ctrl-A should reach readline as beginning-of-line, allowing us to
             # comment out a side-effect command before Enter.
             child.sendline("rm -f /tmp/gua_phase2_ctrl_a_bad")
@@ -323,6 +348,9 @@ def main() -> int:
         password = args.password
     if password is None:
         print("GUA_E2E_PASSWORD is required", file=sys.stderr)
+        return 2
+    if not args.skip_flood and args.flood_lines < 1:
+        print("--flood-lines must be at least 1 unless --skip-flood is used", file=sys.stderr)
         return 2
 
     gua_path = shutil.which(args.gua) if os.path.sep not in args.gua else args.gua

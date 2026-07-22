@@ -1,7 +1,7 @@
-From ded81122f770574c104c6289af1f38ce2a5d8dd9 Mon Sep 17 00:00:00 2001
+From c649ba856aed418faab05bf8d04597dae3898e40 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 01/11] terminal: add opt-in raw text-output pipe stream
+Subject: [PATCH 01/13] terminal: add opt-in raw text-output pipe stream
 
 Add a dedicated outbound pipe stream to guac_terminal that tees the raw
 terminal (PTY) byte stream, verbatim, to the client in addition to the
@@ -316,10 +316,10 @@ index d1a0bae6..29ab0f61 100644
 2.54.0
 
 
-From bf73d3881a3beb05a7099e22a7e8b5df6b3dea1c Mon Sep 17 00:00:00 2001
+From 3e6c985d69b8036f49f9da9c266a9bc0b1232b92 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 02/11] ssh: add opt-in "text-output" parameter
+Subject: [PATCH 02/13] ssh: add opt-in "text-output" parameter
 
 Wire the new text-output mode into the SSH protocol. Adds the boolean
 "text-output" connection parameter (default false). When enabled, the raw
@@ -445,10 +445,10 @@ index 95a62141..af3b68c5 100644
 2.54.0
 
 
-From 937fd5eac68c8836e4b9ef0cada0a9bac6e146b1 Mon Sep 17 00:00:00 2001
+From f28036e375b4717b5f32e6139ed13aa37965dab3 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 03/11] telnet: add opt-in "text-output" parameter
+Subject: [PATCH 03/13] telnet: add opt-in "text-output" parameter
 
 Wire text-output mode into the telnet protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote byte
@@ -570,10 +570,10 @@ index 24e489cb..d8b6c3d4 100644
 2.54.0
 
 
-From 3fe46c0b01e4a4e47ef8dddee36c2f12d2e76d57 Mon Sep 17 00:00:00 2001
+From 7e53b6140c848da91ab443a69eb5d0addaaeaf4a Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 04/11] kubernetes: add opt-in "text-output" parameter
+Subject: [PATCH 04/13] kubernetes: add opt-in "text-output" parameter
 
 Wire text-output mode into the Kubernetes protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote bytes
@@ -694,10 +694,10 @@ index fed7f584..428e2d97 100644
 2.54.0
 
 
-From eacdae58322631f262a73f65f7bff145df90b002 Mon Sep 17 00:00:00 2001
+From fce60264373174c4297f9cfd496141147b25110a Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 11:37:13 -0300
-Subject: [PATCH 05/11] docs: add text-output smoke test
+Subject: [PATCH 05/13] docs: add text-output smoke test
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -1134,10 +1134,10 @@ index 00000000..b49d1c63
 2.54.0
 
 
-From a5091def77086937110c2a967d39d0331ff46a39 Mon Sep 17 00:00:00 2001
+From f075822bda68ca61b2e97a0323a1403920d77804 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 20:46:34 -0300
-Subject: [PATCH 06/11] test: add direct-guacd text-output e2e harness
+Subject: [PATCH 06/13] test: add direct-guacd text-output e2e harness
  (SSH/telnet/k8s)
 
 Adds a manual end-to-end test harness for the text-output feature that
@@ -1618,10 +1618,10 @@ index 00000000..aa427cb5
 2.54.0
 
 
-From 5c2f1720648b1be00da0a87f198f2bd3d8e11733 Mon Sep 17 00:00:00 2001
+From 1f748ccbc3abb53708a86d596b059dd150e93dfd Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:26:31 -0300
-Subject: [PATCH 07/11] terminal: deliver text-output via a per-user (owner)
+Subject: [PATCH 07/13] terminal: deliver text-output via a per-user (owner)
  stream
 
 The text-output STDOUT pipe was allocated with guac_client_alloc_stream()
@@ -1874,10 +1874,10 @@ index 99bf1463..62cf2493 100644
 2.54.0
 
 
-From ce5784d31cd5b67188f55ad4296c2b3de047dee6 Mon Sep 17 00:00:00 2001
+From 125b071c937646f8cbab59553df7a12507e72788 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:37:04 -0300
-Subject: [PATCH 08/11] terminal: add flow control to text-output via ack
+Subject: [PATCH 08/13] terminal: add flow control to text-output via ack
  backpressure
 
 Track the number of text-output blobs sent to the connection owner but
@@ -2163,10 +2163,10 @@ index aa427cb5..f5db25b8 100755
 2.54.0
 
 
-From d746ddc5a19a4e861b36faf2ad1ba4e4df90e1d6 Mon Sep 17 00:00:00 2001
+From 804f2f11084fa0926d1d165ee637e926181430de Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 23:38:57 -0300
-Subject: [PATCH 09/11] terminal: add headless "text-output=raw" mode (suppress
+Subject: [PATCH 09/13] terminal: add headless "text-output=raw" mode (suppress
  rendering)
 
 Extend the text-output parameter to accept "raw" in addition to "true":
@@ -2713,10 +2713,10 @@ index 4dc2853f..1550c145 100755
 2.54.0
 
 
-From 0833667f1771dec4a45977b227fc877adcf46758 Mon Sep 17 00:00:00 2001
+From 8f6d3e4e04038d9e4aa4771ecb2b2b27d3b63de1 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Tue, 21 Jul 2026 23:59:51 -0300
-Subject: [PATCH 10/11] Handle text-output backpressure safely
+Subject: [PATCH 10/13] Handle text-output backpressure safely
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -2774,10 +2774,10 @@ index 75b814d9..1183bde0 100644
 2.54.0
 
 
-From 27f665c4a9e0078540b8e1c448a615e2a812cce7 Mon Sep 17 00:00:00 2001
+From a553342b2aa8b88a8e46735aff12b8b3260f6ece Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 03:27:33 -0300
-Subject: [PATCH 11/11] Add text-output flow-control tests
+Subject: [PATCH 11/13] Add text-output flow-control tests
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -3211,6 +3211,443 @@ index 00000000..85863630
 +    text_output_fixture_free(fixture);
 +
 +}
+-- 
+2.54.0
+
+
+From 6ff14ca4c0b39f0205154238f4751de7b075ebab Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 13:59:23 -0300
+Subject: [PATCH 12/13] Bound text-output backpressure by bytes, not blob count
+
+The outstanding-output window was capped at 16 blobs with no bound on the
+volume those blobs represented. In raw (headless) mode every write is
+flushed as its own blob, so blobs are frequently only a few bytes and the
+window could be exhausted after well under a kilobyte of ordinary
+interactive output. Because raw mode responds to an exhausted window by
+aborting the connection, a healthy client on a link with any appreciable
+ack latency could have its session terminated mid-session.
+
+Track the size of each outstanding blob in a FIFO alongside the count, and
+bound the backlog at 256 KB of unacknowledged data. The blob count remains
+capped, at 256, purely to bound the tracking array; the byte limit is what
+now determines when a consumer is considered stalled. Behavior on overrun
+is unchanged: tee mode drops, raw mode aborts.
+
+Adds regression coverage for the byte bound, for ACK correctly retiring the
+oldest blob's byte count, for surplus ACKs not driving the counters
+negative, and for a closed stream being marked unroutable so a late ACK is
+rejected before dispatch.
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/terminal.c                       |  51 ++++++--
+ src/terminal/terminal/terminal-priv.h         |  63 ++++++++--
+ src/terminal/tests/text-output/flow-control.c | 118 ++++++++++++++++++
+ 3 files changed, 214 insertions(+), 18 deletions(-)
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 290c1740..9197eaf8 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3049,8 +3049,22 @@ static int guac_terminal_text_output_ack(guac_user* user, guac_stream* stream,
+     guac_terminal* term = (guac_terminal*) stream->data;
+ 
+     guac_terminal_lock(term);
+-    if (term->text_output_inflight > 0)
++
++    /* Retire the oldest outstanding blob, reducing the outstanding byte count
++     * by that blob's size. Blobs are acknowledged in the order sent. */
++    if (term->text_output_inflight > 0) {
++
++        term->text_output_inflight_bytes -=
++                term->text_output_inflight_sizes[term->text_output_inflight_head];
++
++        term->text_output_inflight_head =
++                (term->text_output_inflight_head + 1)
++                        % GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
++
+         term->text_output_inflight--;
++
++    }
++
+     guac_terminal_unlock(term);
+ 
+     return 0;
+@@ -3150,12 +3164,18 @@ static void* guac_terminal_text_output_flush_owner(guac_user* owner, void* data)
+ 
+     if (term->text_output_stream != NULL && term->text_output_length > 0) {
+ 
+-        /* Apply backpressure: if too many blobs are outstanding, the consumer
+-         * is not keeping up. Tee mode remains best-effort and drops buffered
+-         * raw output rather than stalling browser users that share the same
+-         * protocol read loop. Raw/headless mode is CLI-facing and byte-oriented;
+-         * fail fast instead of silently corrupting the stream. */
+-        if (term->text_output_inflight >= GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT) {
++        /* Apply backpressure: if too much output is outstanding, the consumer
++         * is not keeping up. The backlog is bounded by bytes rather than by
++         * blob count alone, since raw mode flushes every write as its own blob
++         * and those blobs may be only a few bytes each. Tee mode remains
++         * best-effort and drops buffered raw output rather than stalling browser
++         * users that share the same protocol read loop. Raw/headless mode is
++         * CLI-facing and byte-oriented; fail fast instead of silently
++         * corrupting the stream. */
++        if (term->text_output_inflight >= GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT
++                || term->text_output_inflight_bytes + term->text_output_length
++                        > GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES) {
++
+             if (term->text_output_flush_immediately) {
+                 guac_client_abort(term->client, GUAC_PROTOCOL_STATUS_SERVER_ERROR,
+                         "text-output consumer is not keeping up");
+@@ -3164,9 +3184,9 @@ static void* guac_terminal_text_output_flush_owner(guac_user* owner, void* data)
+             }
+ 
+             guac_client_log(term->client, GUAC_LOG_WARNING, "Dropping %i bytes of "
+-                    "text-output: consumer is not keeping up (%i blobs "
+-                    "outstanding).", term->text_output_length,
+-                    term->text_output_inflight);
++                    "text-output: consumer is not keeping up (%i blobs / %i "
++                    "bytes outstanding).", term->text_output_length,
++                    term->text_output_inflight, term->text_output_inflight_bytes);
+             term->text_output_length = 0;
+             return NULL;
+         }
+@@ -3174,6 +3194,15 @@ static void* guac_terminal_text_output_flush_owner(guac_user* owner, void* data)
+         guac_protocol_send_blob(owner->socket, term->text_output_stream,
+                 term->text_output_buffer, term->text_output_length);
+         guac_socket_flush(owner->socket);
++
++        /* Record the size of the newly-outstanding blob so that the byte count
++         * can be reduced by the same amount when it is acknowledged */
++        term->text_output_inflight_sizes[
++                (term->text_output_inflight_head + term->text_output_inflight)
++                        % GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT] =
++                term->text_output_length;
++
++        term->text_output_inflight_bytes += term->text_output_length;
+         term->text_output_length = 0;
+         term->text_output_inflight++;
+     }
+@@ -3235,6 +3264,8 @@ void guac_terminal_text_output_open(guac_terminal* term, const char* name,
+ 
+     term->text_output_length = 0;
+     term->text_output_inflight = 0;
++    term->text_output_inflight_bytes = 0;
++    term->text_output_inflight_head = 0;
+     term->text_output_flush_immediately = flush_immediately;
+ 
+     /* Allocate and open the stream on the connection owner's socket, so raw
+diff --git a/src/terminal/terminal/terminal-priv.h b/src/terminal/terminal/terminal-priv.h
+index 776a3021..00593bac 100644
+--- a/src/terminal/terminal/terminal-priv.h
++++ b/src/terminal/terminal/terminal-priv.h
+@@ -41,8 +41,25 @@
+  * The maximum number of text-output blobs that may be outstanding (sent to the
+  * connection owner but not yet acknowledged) before further buffered output is
+  * dropped or, in raw/headless mode, the connection is aborted.
++ *
++ * This bounds the number of blobs tracked, not the volume of data: in raw
++ * (headless) mode every write is flushed as its own blob, so blobs may be only
++ * a few bytes each and this limit alone would be reached after a trivial amount
++ * of output. GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES bounds the actual
++ * backlog; this value need only be generous enough that a consumer acking at a
++ * sane rate never reaches it.
++ */
++#define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT 256
++
++/**
++ * The maximum number of bytes of text-output which may be outstanding (sent to
++ * the connection owner but not yet acknowledged) before further buffered output
++ * is dropped or, in raw/headless mode, the connection is aborted. This is the
++ * meaningful bound on the backlog devoted to a stalled consumer, and is
++ * expressed in bytes so that it is unaffected by how the output happens to be
++ * split into blobs.
+  */
+-#define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT 16
++#define GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES (256 * 1024)
+ 
+ /**
+  * Handler for characters printed to the terminal. When a character is printed,
+@@ -182,16 +199,46 @@ struct guac_terminal {
+ 
+     /**
+      * The number of text-output blobs which have been sent to the connection
+-     * owner but not yet acknowledged via an "ack" instruction. This applies
+-     * backpressure: when it reaches GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT,
+-     * further buffered output is dropped rather than sent, bounding the memory
+-     * and backlog devoted to a text-output consumer that has stalled. In tee
+-     * mode the raw stream shares the protocol read loop with the graphical
+-     * display, so output is dropped rather than blocked, to avoid stalling any
+-     * co-attached browser user.
++     * owner but not yet acknowledged via an "ack" instruction. Together with
++     * text_output_inflight_bytes this applies backpressure: when either this
++     * reaches GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT or the outstanding byte
++     * count would exceed GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES, the
++     * consumer is considered stalled.
++     *
++     * The response to a stalled consumer differs by mode. In tee mode the raw
++     * stream shares the protocol read loop with the graphical display, so
++     * buffered output is dropped rather than blocked, to avoid stalling any
++     * co-attached browser user; the session continues. In raw (headless) mode
++     * the stream is the session's only output and is byte-oriented, so the
++     * connection is aborted rather than silently delivering a corrupted stream.
+      */
+     int text_output_inflight;
+ 
++    /**
++     * The total number of bytes of text-output which have been sent to the
++     * connection owner but not yet acknowledged. Maintained alongside
++     * text_output_inflight_sizes, which records the size of each outstanding
++     * blob so that this count can be reduced by the correct amount as each
++     * "ack" arrives.
++     */
++    int text_output_inflight_bytes;
++
++    /**
++     * Circular buffer recording the size, in bytes, of each text-output blob
++     * which has been sent but not yet acknowledged. The oldest outstanding blob
++     * is at index text_output_inflight_head, and text_output_inflight entries
++     * are valid starting from there. Blobs on a single stream are acknowledged
++     * in the order they were sent, so treating this as a FIFO correctly
++     * attributes each "ack" to the blob it acknowledges.
++     */
++    int text_output_inflight_sizes[GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT];
++
++    /**
++     * The index within text_output_inflight_sizes of the oldest outstanding
++     * text-output blob.
++     */
++    int text_output_inflight_head;
++
+     /**
+      * Whether buffered text-output should be flushed immediately as it is
+      * written, rather than at terminal frame boundaries. This is required in
+diff --git a/src/terminal/tests/text-output/flow-control.c b/src/terminal/tests/text-output/flow-control.c
+index 85863630..9197570e 100644
+--- a/src/terminal/tests/text-output/flow-control.c
++++ b/src/terminal/tests/text-output/flow-control.c
+@@ -210,6 +210,124 @@ void test_text_output__tee_mode_drops_when_consumer_stalls(void) {
+ 
+ }
+ 
++/**
++ * Regression test: the outstanding-output bound must be expressed in bytes, not
++ * merely in blob count. Raw mode flushes every write as its own blob, so a
++ * client which is acking perfectly normally still accumulates many small
++ * outstanding blobs; a blob-count-only bound would abort a healthy session after
++ * a trivial amount of interactive output.
++ */
++void test_text_output__many_tiny_blobs_do_not_trip_backpressure(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++
++    /* Emit far more blobs than a naive count-based window would tolerate,
++     * without acking any of them. The total volume remains tiny. */
++    for (int i = 0; i < 200; i++)
++        guac_terminal_text_output_write(fixture->term, "x", 1);
++
++    CU_ASSERT_EQUAL(fixture->client->state, GUAC_CLIENT_RUNNING);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 200);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight_bytes, 200);
++
++    text_output_fixture_free(fixture);
++
++}
++
++/**
++ * Verifies that each ACK retires the oldest outstanding blob and reduces the
++ * outstanding byte count by exactly that blob's size, rather than by a fixed
++ * amount.
++ */
++void test_text_output__ack_retires_oldest_blob_bytes(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++
++    guac_terminal_text_output_write(fixture->term, "abc", 3);
++    guac_terminal_text_output_write(fixture->term, "defgh", 5);
++
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 2);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight_bytes, 8);
++
++    guac_stream* stream = fixture->term->text_output_stream;
++
++    /* Acking retires the oldest blob (3 bytes), not the newest */
++    stream->ack_handler(fixture->owner, stream, "OK",
++            GUAC_PROTOCOL_STATUS_SUCCESS);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 1);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight_bytes, 5);
++
++    stream->ack_handler(fixture->owner, stream, "OK",
++            GUAC_PROTOCOL_STATUS_SUCCESS);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 0);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight_bytes, 0);
++
++    /* A surplus ACK must not drive the counters negative */
++    stream->ack_handler(fixture->owner, stream, "OK",
++            GUAC_PROTOCOL_STATUS_SUCCESS);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight, 0);
++    CU_ASSERT_EQUAL(fixture->term->text_output_inflight_bytes, 0);
++
++    text_output_fixture_free(fixture);
++
++}
++
++/**
++ * Verifies that the byte bound, rather than the blob count, is what ultimately
++ * stops a stalled raw-mode consumer.
++ */
++void test_text_output__byte_bound_aborts_raw_mode(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++
++    /* Simulate a large outstanding backlog well within the blob-count limit.
++     * Set directly rather than written, as actually sending this volume would
++     * fill the test pipe. */
++    fixture->term->text_output_inflight = 1;
++    fixture->term->text_output_inflight_bytes =
++            GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES;
++
++    guac_terminal_text_output_write(fixture->term, "over", 4);
++
++    CU_ASSERT_EQUAL(fixture->client->state, GUAC_CLIENT_STOPPING);
++    CU_ASSERT_EQUAL(fixture->term->text_output_length, 0);
++    CU_ASSERT_EQUAL(fixture->last_log_level, GUAC_LOG_ERROR);
++
++    text_output_fixture_free(fixture);
++
++}
++
++/**
++ * Verifies that closing the text-output stream releases it such that a late ACK
++ * arriving afterwards is rejected before dispatch, rather than reaching the
++ * terminal's ACK handler with a stale data pointer.
++ */
++void test_text_output__close_marks_stream_unroutable(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 0);
++
++    guac_stream* stream = fixture->term->text_output_stream;
++    CU_ASSERT_PTR_NOT_NULL_FATAL(stream);
++
++    guac_terminal_text_output_close(fixture->term);
++
++    /* The terminal must no longer reference the stream, and the stream must be
++     * marked closed so that __guac_handle_ack() drops any late ACK for it */
++    CU_ASSERT_PTR_NULL(fixture->term->text_output_stream);
++    CU_ASSERT_EQUAL(stream->index, GUAC_USER_CLOSED_STREAM_INDEX);
++
++    text_output_fixture_free(fixture);
++
++}
++
+ void test_text_output__raw_mode_aborts_when_consumer_stalls(void) {
+ 
+     text_output_fixture* fixture = text_output_fixture_alloc();
+-- 
+2.54.0
+
+
+From 455fe5b38d14f9369c4f567374a81fc414056f4d Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 13:59:23 -0300
+Subject: [PATCH 13/13] Document text-output flow-control contract
+
+README-text-output.md described the stream and its security gating but not
+the ack contract clients must honor, nor what happens when they don't --
+which now differs by mode: tee drops and continues, raw aborts the
+connection with SERVER_ERROR. Document both, and the requirement to ack on
+receipt rather than after rendering.
+
+Also drops a duplicated comment line left above the text-output parsing in
+each of the three protocols' settings.c.
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ README-text-output.md               | 24 ++++++++++++++++++++++++
+ src/protocols/kubernetes/settings.c |  1 -
+ src/protocols/ssh/settings.c        |  1 -
+ src/protocols/telnet/settings.c     |  1 -
+ 4 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/README-text-output.md b/README-text-output.md
+index 6653526e..00e183a0 100644
+--- a/README-text-output.md
++++ b/README-text-output.md
+@@ -50,6 +50,30 @@ honors the existing copy restriction used by terminal protocols:
+ * If copy/clipboard output is allowed and `text-output=true`, guacd opens the
+   `STDOUT` pipe and writes raw terminal bytes to it.
+ 
++Flow control and backpressure
++-----------------------------
++
++Clients must send an `ack` instruction for every `blob` received on the `STDOUT`
++pipe, and should do so on receipt rather than after rendering — acking only after
++a blocking write to a local terminal lets a slow consumer stall its own ack
++stream.
++
++guacd bounds the unacknowledged backlog at 256 KB, and at no more than 256
++outstanding blobs. The byte bound is the operative one: in raw mode every PTY
++read is flushed as its own blob, so blobs are frequently only a few bytes and a
++blob-count bound alone would be reached after a trivial amount of output.
++
++What happens on overrun depends on the mode, and the difference is deliberate:
++
++* In tee mode, buffered output is **dropped** and the session continues. The tee
++  shares the protocol read loop with the graphical display, so blocking on a
++  stalled text consumer would also stall any co-attached browser user. Delivery
++  is therefore best-effort, and a dropped chunk is logged as a warning.
++* In raw mode, the connection is **aborted** with `SERVER_ERROR` and the message
++  `text-output consumer is not keeping up`. The pipe is the session's only output
++  and is byte-oriented, so failing fast is preferable to handing the client a
++  silently-truncated stream.
++
+ Manual tunnel smoke test
+ ------------------------
+ 
+diff --git a/src/protocols/kubernetes/settings.c b/src/protocols/kubernetes/settings.c
+index 601ccf84..8b9544e8 100644
+--- a/src/protocols/kubernetes/settings.c
++++ b/src/protocols/kubernetes/settings.c
+@@ -507,7 +507,6 @@ guac_kubernetes_settings* guac_kubernetes_parse_args(guac_user* user,
+     settings->terminal_type =
+         guac_user_parse_args_string(user, GUAC_KUBERNETES_CLIENT_ARGS, argv,
+                 IDX_TERMINAL_TYPE, "linux");
+-    /* Parse raw text-output mode flag */
+     /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
+      * is preserved for browser clients) or "raw" (headless: the graphical
+      * terminal is not rendered, eliminating the graphical instruction stream
+diff --git a/src/protocols/ssh/settings.c b/src/protocols/ssh/settings.c
+index f00f8de6..c07d80af 100644
+--- a/src/protocols/ssh/settings.c
++++ b/src/protocols/ssh/settings.c
+@@ -632,7 +632,6 @@ guac_ssh_settings* guac_ssh_parse_args(guac_user* user,
+         guac_user_parse_args_boolean(user, GUAC_SSH_CLIENT_ARGS, argv,
+                 IDX_DISABLE_PASTE, false);
+ 
+-    /* Parse raw text-output mode flag */
+     /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
+      * is preserved for browser clients) or "raw" (headless: the graphical
+      * terminal is not rendered, eliminating the graphical instruction stream
+diff --git a/src/protocols/telnet/settings.c b/src/protocols/telnet/settings.c
+index 748b2f18..eba37bc2 100644
+--- a/src/protocols/telnet/settings.c
++++ b/src/protocols/telnet/settings.c
+@@ -597,7 +597,6 @@ guac_telnet_settings* guac_telnet_parse_args(guac_user* user,
+         guac_user_parse_args_boolean(user, GUAC_TELNET_CLIENT_ARGS, argv,
+                 IDX_DISABLE_PASTE, false);
+ 
+-    /* Parse raw text-output mode flag */
+     /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
+      * is preserved for browser clients) or "raw" (headless: the graphical
+      * terminal is not rendered, eliminating the graphical instruction stream
 -- 
 2.54.0
 

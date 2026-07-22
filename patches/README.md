@@ -37,10 +37,19 @@ of decoding rasterized glyphs.
   path strips `ESC`/CSI/OSC sequences, which would defeat a faithful raw stream.
 - Output is buffered in 6048-byte chunks. Tee mode flushes at terminal frame boundaries or when full;
   raw/headless mode flushes immediately because there is no graphical frame cycle.
-- Clients **must send Guacamole `ack` instructions for each received `blob`**. Guacd tracks up to
-  16 unacknowledged text-output blobs; once that limit is reached, additional buffered text output is
-  dropped instead of blocking the remote PTY/read loop. This bounds memory/backlog and avoids stalling
-  co-attached browser users in tee mode.
+- Clients **must send Guacamole `ack` instructions for each received `blob`**, and must do so
+  promptly — acknowledge on receipt rather than after rendering, so that a slow or blocked local
+  terminal cannot stall the ack stream. Guacd bounds the unacknowledged backlog at **256 KB** (and at
+  most 256 outstanding blobs); the byte bound is the one that matters in practice, since raw mode
+  emits one blob per PTY read and those blobs are often only a few bytes.
+- **The response to exceeding that bound differs by mode**, and a client author must account for both:
+  - `text-output=true` (tee): buffered output is **dropped** and the session continues. Delivery is
+    best-effort — output is lost silently rather than blocking the remote PTY/read loop, which would
+    also stall co-attached browser users.
+  - `text-output=raw`: the **connection is aborted** with `SERVER_ERROR` and the message
+    `text-output consumer is not keeping up`. Raw mode is the sole output channel and is
+    byte-oriented, so guacd fails fast rather than delivering a silently-corrupted stream. Clients
+    should surface this status distinctly from an ordinary disconnect.
 - Inbound STDIN already works via the existing `pipe_handler` →
   `src/terminal/terminal-stdin-stream.c`. No new input path.
 

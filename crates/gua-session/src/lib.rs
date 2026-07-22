@@ -394,8 +394,11 @@ impl Session {
     }
 
     fn ack_stream_blob(&mut self, stream: String) -> Result<()> {
-        // Required by the patched guacd text-output/control stream implementations:
-        // without blob acks, guacd will eventually drop or stall bounded output.
+        // Required by the patched guacd text-output/control stream implementations.
+        // guacd bounds the unacknowledged backlog; on overrun it drops output in tee
+        // mode, and aborts the connection outright in raw mode. Acks are therefore
+        // sent on receipt, before the decoded bytes are handed to the renderer, so a
+        // slow or blocked local terminal can never stall the ack stream.
         self.tunnel.send(&Instruction::new(
             "ack",
             [stream, "OK".to_string(), "0".to_string()],

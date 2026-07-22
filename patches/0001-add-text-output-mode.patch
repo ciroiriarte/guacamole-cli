@@ -1,7 +1,7 @@
-From 51881ff17d61d96f10e375f41c5c17aec6dc1950 Mon Sep 17 00:00:00 2001
+From 2a8141fd8cbb924a904f966f33ed458348873efd Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 01/16] terminal: add opt-in raw text-output pipe stream
+Subject: [PATCH 01/17] terminal: add opt-in raw text-output pipe stream
 
 Add a dedicated outbound pipe stream to guac_terminal that tees the raw
 terminal (PTY) byte stream, verbatim, to the client in addition to the
@@ -316,10 +316,10 @@ index d1a0bae6..29ab0f61 100644
 2.54.0
 
 
-From 947eb3f5e90fe50498348132471245c0c76ebe22 Mon Sep 17 00:00:00 2001
+From 7fc0225a54bd9cec6ec9e258403fc0383854a6d3 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 02/16] ssh: add opt-in "text-output" parameter
+Subject: [PATCH 02/17] ssh: add opt-in "text-output" parameter
 
 Wire the new text-output mode into the SSH protocol. Adds the boolean
 "text-output" connection parameter (default false). When enabled, the raw
@@ -445,10 +445,10 @@ index 95a62141..af3b68c5 100644
 2.54.0
 
 
-From 11201d0890770331e8dad29f9460faeb4a33efe0 Mon Sep 17 00:00:00 2001
+From ce9251e94eb513715fb966323fd353eed7cd9027 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 03/16] telnet: add opt-in "text-output" parameter
+Subject: [PATCH 03/17] telnet: add opt-in "text-output" parameter
 
 Wire text-output mode into the telnet protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote byte
@@ -570,10 +570,10 @@ index 24e489cb..d8b6c3d4 100644
 2.54.0
 
 
-From 9eb0931b02f9000d2ac977add6da26090e78bd00 Mon Sep 17 00:00:00 2001
+From d491b874e23a4942467db86f25d57db6ac4f46c2 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 04/16] kubernetes: add opt-in "text-output" parameter
+Subject: [PATCH 04/17] kubernetes: add opt-in "text-output" parameter
 
 Wire text-output mode into the Kubernetes protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote bytes
@@ -694,10 +694,10 @@ index fed7f584..428e2d97 100644
 2.54.0
 
 
-From 80090eaadb09380533f6927a24d22afacd1fa1c0 Mon Sep 17 00:00:00 2001
+From 26a97aba3beda732c0bb5bc7e7854dad6bab403f Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 11:37:13 -0300
-Subject: [PATCH 05/16] docs: add text-output smoke test
+Subject: [PATCH 05/17] docs: add text-output smoke test
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -1134,10 +1134,10 @@ index 00000000..b49d1c63
 2.54.0
 
 
-From 3e97019a9a301e83512b0d9e6cc9db4ec7ea2ad5 Mon Sep 17 00:00:00 2001
+From 671c5cae07f480702522dbf559081e54bc2b052a Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 20:46:34 -0300
-Subject: [PATCH 06/16] test: add direct-guacd text-output e2e harness
+Subject: [PATCH 06/17] test: add direct-guacd text-output e2e harness
  (SSH/telnet/k8s)
 
 Adds a manual end-to-end test harness for the text-output feature that
@@ -1618,10 +1618,10 @@ index 00000000..aa427cb5
 2.54.0
 
 
-From 329f78bbb2d39616860c492e91d60252a480aaf7 Mon Sep 17 00:00:00 2001
+From 16e2c09fbced8a9b87e90ae9766600c5e5e3e2e3 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:26:31 -0300
-Subject: [PATCH 07/16] terminal: deliver text-output via a per-user (owner)
+Subject: [PATCH 07/17] terminal: deliver text-output via a per-user (owner)
  stream
 
 The text-output STDOUT pipe was allocated with guac_client_alloc_stream()
@@ -1874,10 +1874,10 @@ index 99bf1463..62cf2493 100644
 2.54.0
 
 
-From 79284b2814d164cdcd74fd203dbe6ec74f28fbd5 Mon Sep 17 00:00:00 2001
+From e1060c7d8ab4c8261353b9b0619cc5c3acbe42e3 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:37:04 -0300
-Subject: [PATCH 08/16] terminal: add flow control to text-output via ack
+Subject: [PATCH 08/17] terminal: add flow control to text-output via ack
  backpressure
 
 Track the number of text-output blobs sent to the connection owner but
@@ -2163,10 +2163,10 @@ index aa427cb5..f5db25b8 100755
 2.54.0
 
 
-From 45fe36532b59218bf904dbeb79e53135e89b2b99 Mon Sep 17 00:00:00 2001
+From 9caddd7d8139a8da5e7387989a17bb22ab344360 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 23:38:57 -0300
-Subject: [PATCH 09/16] terminal: add headless "text-output=raw" mode (suppress
+Subject: [PATCH 09/17] terminal: add headless "text-output=raw" mode (suppress
  rendering)
 
 Extend the text-output parameter to accept "raw" in addition to "true":
@@ -2713,10 +2713,10 @@ index 4dc2853f..1550c145 100755
 2.54.0
 
 
-From 30ed78fc59d2b975f07064bf6afa1b6f90893137 Mon Sep 17 00:00:00 2001
+From 6e02d52eadb35b1a26bb9866322ef9344257da74 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Tue, 21 Jul 2026 23:59:51 -0300
-Subject: [PATCH 10/16] Handle text-output backpressure safely
+Subject: [PATCH 10/17] Handle text-output backpressure safely
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -2774,10 +2774,10 @@ index 75b814d9..1183bde0 100644
 2.54.0
 
 
-From 4045f35fc27a273bb0fcc1a03123396831ae2aa4 Mon Sep 17 00:00:00 2001
+From 6c2e4c217b2dafe9b546cba2376f69de3cd84a1b Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 03:27:33 -0300
-Subject: [PATCH 11/16] Add text-output flow-control tests
+Subject: [PATCH 11/17] Add text-output flow-control tests
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -3215,10 +3215,10 @@ index 00000000..85863630
 2.54.0
 
 
-From 248a68c4a2b50b9da18bde233fd87c2025cd7fc2 Mon Sep 17 00:00:00 2001
+From 31c081b65a862f938fbe94bcf508281a9f4fefbb Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 13:59:23 -0300
-Subject: [PATCH 12/16] Bound text-output backpressure by bytes, not blob count
+Subject: [PATCH 12/17] Bound text-output backpressure by bytes, not blob count
 
 The outstanding-output window was capped at 16 blobs with no bound on the
 volume those blobs represented. In raw (headless) mode every write is
@@ -3555,10 +3555,10 @@ index 85863630..9197570e 100644
 2.54.0
 
 
-From e6ddbe88e8a9799e3231dc5885b8d5fed1be8b2e Mon Sep 17 00:00:00 2001
+From 3e3a79e3d0a418a63e491c2d5ec67f841b0209dd Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 13:59:23 -0300
-Subject: [PATCH 13/16] Document text-output flow-control contract
+Subject: [PATCH 13/17] Document text-output flow-control contract
 
 README-text-output.md described the stream and its security gating but not
 the ack contract clients must honor, nor what happens when they don't --
@@ -3652,10 +3652,10 @@ index 748b2f18..eba37bc2 100644
 2.54.0
 
 
-From 1ceb225088368a4be190b249992508d6419f1465 Mon Sep 17 00:00:00 2001
+From 12441520c2c98b358a04261b194ff28070e07ae3 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 14:04:36 -0300
-Subject: [PATCH 14/16] Link libguac explicitly into the terminal test binary
+Subject: [PATCH 14/17] Link libguac explicitly into the terminal test binary
 
 The text-output tests reference libguac directly (guac_client_alloc,
 guac_user_alloc, guac_socket_open, the guac_protocol_send_* family), but
@@ -3696,10 +3696,10 @@ index 00a89afd..16640a52 100644
 2.54.0
 
 
-From b78b873a3126aa9d0c72bfe42fd0a8509789b581 Mon Sep 17 00:00:00 2001
+From 9c35a70a104b8a16fc42f4d489c29b010ad03987 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 14:11:36 -0300
-Subject: [PATCH 15/16] Exercise the text-output byte bound in the e2e harness
+Subject: [PATCH 15/17] Exercise the text-output byte bound in the e2e harness
 
 The flow-control scenarios flooded 60 short lines, which overran the old
 16-blob window but is only ~2 KB and so now sits comfortably inside the
@@ -3813,10 +3813,10 @@ index f5db25b8..e15dfa95 100755
 2.54.0
 
 
-From 0ecc5b0cd14de77e5a6ed28d3d39d0f6779427de Mon Sep 17 00:00:00 2001
+From 23cc1c64d753785776e045ef7032c78909e8bedc Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 14:20:38 -0300
-Subject: [PATCH 16/16] Throttle raw text-output instead of aborting on
+Subject: [PATCH 16/17] Throttle raw text-output instead of aborting on
  backpressure
 
 Aborting when the outstanding-output window filled was wrong for raw mode.
@@ -4142,6 +4142,121 @@ index 9197570e..aecc6c45 100644
      fixture->term->text_output_inflight = GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
  
      guac_terminal_text_output_write(fixture->term, "abort", 5);
+-- 
+2.54.0
+
+
+From d16f571d27dd466bb97cbeea60efdfc2b6c1e7bd Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 14:34:11 -0300
+Subject: [PATCH 17/17] Stop waiting for text-output window once disconnected
+
+The raw-mode wait for outstanding-output space was signalled only by an
+"ack", and woke otherwise only at the give-up deadline. A client which
+disconnects abruptly mid-flood never sends another ack, so the protocol read
+loop stayed parked in the wait and session teardown was delayed by up to the
+full 15-second interval -- where the previous abort-on-overrun behavior had
+torn down immediately.
+
+Checks client state before each wait and wakes at least once a second, so a
+disconnect is noticed promptly while the give-up deadline is unchanged for a
+client that is merely stalled.
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/terminal.c                       | 26 ++++++++++++++--
+ src/terminal/tests/text-output/flow-control.c | 30 +++++++++++++++++++
+ 2 files changed, 54 insertions(+), 2 deletions(-)
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index ba8f6ceb..57c37613 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -3294,12 +3294,34 @@ static void guac_terminal_text_output_await_window(guac_terminal* term) {
+                 || term->text_output_inflight_bytes + term->text_output_length
+                         > GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT_BYTES)) {
+ 
++        /* Stop waiting once the connection is going away. Only an "ack" signals
++         * this condition, and a client which has disconnected will never send
++         * one, so without this check teardown would stall until the give-up
++         * deadline expired. */
++        if (term->client->state != GUAC_CLIENT_RUNNING)
++            return;
++
++        struct timespec now;
++        clock_gettime(CLOCK_REALTIME, &now);
++
+         /* Give up if the consumer has stopped acking entirely. The flush which
+          * follows will then find the window still full and abort. */
+-        if (pthread_cond_timedwait(&term->text_output_acked, &term->lock,
+-                    &deadline) == ETIMEDOUT)
++        if (now.tv_sec > deadline.tv_sec
++                || (now.tv_sec == deadline.tv_sec
++                    && now.tv_nsec >= deadline.tv_nsec))
+             return;
+ 
++        /* Wake at least once a second so that a disconnect is noticed promptly
++         * rather than only when the consumer acks or the deadline expires */
++        struct timespec wake = now;
++        wake.tv_sec += 1;
++        if (wake.tv_sec > deadline.tv_sec
++                || (wake.tv_sec == deadline.tv_sec
++                    && wake.tv_nsec > deadline.tv_nsec))
++            wake = deadline;
++
++        pthread_cond_timedwait(&term->text_output_acked, &term->lock, &wake);
++
+     }
+ 
+ }
+diff --git a/src/terminal/tests/text-output/flow-control.c b/src/terminal/tests/text-output/flow-control.c
+index aecc6c45..654d2d12 100644
+--- a/src/terminal/tests/text-output/flow-control.c
++++ b/src/terminal/tests/text-output/flow-control.c
+@@ -31,6 +31,7 @@
+ #include <pthread.h>
+ #include <stdarg.h>
+ #include <stdlib.h>
++#include <time.h>
+ #include <string.h>
+ #include <unistd.h>
+ 
+@@ -391,6 +392,35 @@ void test_text_output__raw_mode_throttles_rather_than_aborting(void) {
+ 
+ }
+ 
++/**
++ * Regression test: a raw-mode writer waiting for window space must stop waiting
++ * as soon as the connection is going away. Only an ACK signals that condition,
++ * and a disconnected client never sends one, so a writer which ignored client
++ * state would hold teardown up until the give-up deadline expired.
++ */
++void test_text_output__raw_mode_stops_waiting_once_disconnected(void) {
++
++    text_output_fixture* fixture = text_output_fixture_alloc();
++
++    guac_terminal_text_output_open(fixture->term, "STDOUT", 1);
++
++    /* A generous give-up deadline: the test must not depend on reaching it */
++    fixture->term->text_output_stall_timeout = 30;
++    fixture->term->text_output_inflight = GUAC_TERMINAL_TEXT_OUTPUT_MAX_INFLIGHT;
++
++    /* The connection is being torn down; no further ACK can arrive */
++    fixture->client->state = GUAC_CLIENT_STOPPING;
++
++    time_t started = time(NULL);
++    guac_terminal_text_output_write(fixture->term, "gone", 4);
++    time_t elapsed = time(NULL) - started;
++
++    CU_ASSERT_TRUE(elapsed < 5);
++
++    text_output_fixture_free(fixture);
++
++}
++
+ void test_text_output__raw_mode_aborts_when_consumer_stalls(void) {
+ 
+     text_output_fixture* fixture = text_output_fixture_alloc();
 -- 
 2.54.0
 

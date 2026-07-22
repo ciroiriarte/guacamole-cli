@@ -1,7 +1,7 @@
-From c649ba856aed418faab05bf8d04597dae3898e40 Mon Sep 17 00:00:00 2001
+From 8356da2ee59227a1657a072d0c8eb7dec160212d Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 01/13] terminal: add opt-in raw text-output pipe stream
+Subject: [PATCH 01/15] terminal: add opt-in raw text-output pipe stream
 
 Add a dedicated outbound pipe stream to guac_terminal that tees the raw
 terminal (PTY) byte stream, verbatim, to the client in addition to the
@@ -316,10 +316,10 @@ index d1a0bae6..29ab0f61 100644
 2.54.0
 
 
-From 3e6c985d69b8036f49f9da9c266a9bc0b1232b92 Mon Sep 17 00:00:00 2001
+From 1206a1dfdfaf5fe2051bf473c2962b3cdc3c2fd7 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 02/13] ssh: add opt-in "text-output" parameter
+Subject: [PATCH 02/15] ssh: add opt-in "text-output" parameter
 
 Wire the new text-output mode into the SSH protocol. Adds the boolean
 "text-output" connection parameter (default false). When enabled, the raw
@@ -445,10 +445,10 @@ index 95a62141..af3b68c5 100644
 2.54.0
 
 
-From f28036e375b4717b5f32e6139ed13aa37965dab3 Mon Sep 17 00:00:00 2001
+From 151bb7543446b804e24fc1e549377de25081d3b1 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 03/13] telnet: add opt-in "text-output" parameter
+Subject: [PATCH 03/15] telnet: add opt-in "text-output" parameter
 
 Wire text-output mode into the telnet protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote byte
@@ -570,10 +570,10 @@ index 24e489cb..d8b6c3d4 100644
 2.54.0
 
 
-From 7e53b6140c848da91ab443a69eb5d0addaaeaf4a Mon Sep 17 00:00:00 2001
+From a5f38a23685be8d84d5afd8897ea3f74e42fc768 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Mon, 29 Jun 2026 18:20:04 -0300
-Subject: [PATCH 04/13] kubernetes: add opt-in "text-output" parameter
+Subject: [PATCH 04/15] kubernetes: add opt-in "text-output" parameter
 
 Wire text-output mode into the Kubernetes protocol. Adds the boolean
 "text-output" parameter (default false); when enabled, the remote bytes
@@ -694,10 +694,10 @@ index fed7f584..428e2d97 100644
 2.54.0
 
 
-From fce60264373174c4297f9cfd496141147b25110a Mon Sep 17 00:00:00 2001
+From c5cc5937e6e71e4a1286bdff303e7d81a6484b35 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 11:37:13 -0300
-Subject: [PATCH 05/13] docs: add text-output smoke test
+Subject: [PATCH 05/15] docs: add text-output smoke test
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -1134,10 +1134,10 @@ index 00000000..b49d1c63
 2.54.0
 
 
-From f075822bda68ca61b2e97a0323a1403920d77804 Mon Sep 17 00:00:00 2001
+From 6148a4fa32e144f77a191bdcb97b95a51d5881d3 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 20:46:34 -0300
-Subject: [PATCH 06/13] test: add direct-guacd text-output e2e harness
+Subject: [PATCH 06/15] test: add direct-guacd text-output e2e harness
  (SSH/telnet/k8s)
 
 Adds a manual end-to-end test harness for the text-output feature that
@@ -1618,10 +1618,10 @@ index 00000000..aa427cb5
 2.54.0
 
 
-From 1f748ccbc3abb53708a86d596b059dd150e93dfd Mon Sep 17 00:00:00 2001
+From 7bfa3554313ae06dedde2e3a2aa360b9d674b724 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:26:31 -0300
-Subject: [PATCH 07/13] terminal: deliver text-output via a per-user (owner)
+Subject: [PATCH 07/15] terminal: deliver text-output via a per-user (owner)
  stream
 
 The text-output STDOUT pipe was allocated with guac_client_alloc_stream()
@@ -1874,10 +1874,10 @@ index 99bf1463..62cf2493 100644
 2.54.0
 
 
-From 125b071c937646f8cbab59553df7a12507e72788 Mon Sep 17 00:00:00 2001
+From cfa11fe360cce275acdcb8fb55b538b0e63d4800 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 21:37:04 -0300
-Subject: [PATCH 08/13] terminal: add flow control to text-output via ack
+Subject: [PATCH 08/15] terminal: add flow control to text-output via ack
  backpressure
 
 Track the number of text-output blobs sent to the connection owner but
@@ -2163,10 +2163,10 @@ index aa427cb5..f5db25b8 100755
 2.54.0
 
 
-From 804f2f11084fa0926d1d165ee637e926181430de Mon Sep 17 00:00:00 2001
+From 0ab28268e3bdbe80f8604690aa2d5e4ca1574da6 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Sat, 4 Jul 2026 23:38:57 -0300
-Subject: [PATCH 09/13] terminal: add headless "text-output=raw" mode (suppress
+Subject: [PATCH 09/15] terminal: add headless "text-output=raw" mode (suppress
  rendering)
 
 Extend the text-output parameter to accept "raw" in addition to "true":
@@ -2713,10 +2713,10 @@ index 4dc2853f..1550c145 100755
 2.54.0
 
 
-From 8f6d3e4e04038d9e4aa4771ecb2b2b27d3b63de1 Mon Sep 17 00:00:00 2001
+From edc7c22ca83d8a01c7f16b7189b41de852419311 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Tue, 21 Jul 2026 23:59:51 -0300
-Subject: [PATCH 10/13] Handle text-output backpressure safely
+Subject: [PATCH 10/15] Handle text-output backpressure safely
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -2774,10 +2774,10 @@ index 75b814d9..1183bde0 100644
 2.54.0
 
 
-From a553342b2aa8b88a8e46735aff12b8b3260f6ece Mon Sep 17 00:00:00 2001
+From b6afe1ba719e87dd32fb61935b48122e2d96aeb2 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 03:27:33 -0300
-Subject: [PATCH 11/13] Add text-output flow-control tests
+Subject: [PATCH 11/15] Add text-output flow-control tests
 
 Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
 ---
@@ -3215,10 +3215,10 @@ index 00000000..85863630
 2.54.0
 
 
-From 6ff14ca4c0b39f0205154238f4751de7b075ebab Mon Sep 17 00:00:00 2001
+From 3cd10feb7048c47b708520ce81befb90f8f0f6a7 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 13:59:23 -0300
-Subject: [PATCH 12/13] Bound text-output backpressure by bytes, not blob count
+Subject: [PATCH 12/15] Bound text-output backpressure by bytes, not blob count
 
 The outstanding-output window was capped at 16 blobs with no bound on the
 volume those blobs represented. In raw (headless) mode every write is
@@ -3555,10 +3555,10 @@ index 85863630..9197570e 100644
 2.54.0
 
 
-From 455fe5b38d14f9369c4f567374a81fc414056f4d Mon Sep 17 00:00:00 2001
+From 80dd876db292ae456e1d3d5e192c4d3fdae01442 Mon Sep 17 00:00:00 2001
 From: Ciro Iriarte <ciro.iriarte@gmail.com>
 Date: Wed, 22 Jul 2026 13:59:23 -0300
-Subject: [PATCH 13/13] Document text-output flow-control contract
+Subject: [PATCH 13/15] Document text-output flow-control contract
 
 README-text-output.md described the stream and its security gating but not
 the ack contract clients must honor, nor what happens when they don't --
@@ -3648,6 +3648,167 @@ index 748b2f18..eba37bc2 100644
      /* Parse text-output mode. Accepts "true" (tee mode: the graphical display
       * is preserved for browser clients) or "raw" (headless: the graphical
       * terminal is not rendered, eliminating the graphical instruction stream
+-- 
+2.54.0
+
+
+From 8139d2762cc1d5f884546a9437a26a84a1caccba Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 14:04:36 -0300
+Subject: [PATCH 14/15] Link libguac explicitly into the terminal test binary
+
+The text-output tests reference libguac directly (guac_client_alloc,
+guac_user_alloc, guac_socket_open, the guac_protocol_send_* family), but
+test_terminal listed only libguac-terminal in LDADD and relied on picking
+libguac up transitively. Toolchains defaulting to --no-copy-dt-needed-entries,
+such as Debian's, reject that: "libguac.so.25: error adding symbols: DSO
+missing from command line", and `make check` fails to build.
+
+Lists @LIBGUAC_LTLIB@ and @LIBGUAC_INCLUDE@ explicitly, matching what the
+libguac, common, and common-ssh test directories already do.
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ src/terminal/tests/Makefile.am | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/terminal/tests/Makefile.am b/src/terminal/tests/Makefile.am
+index 00a89afd..16640a52 100644
+--- a/src/terminal/tests/Makefile.am
++++ b/src/terminal/tests/Makefile.am
+@@ -43,11 +43,13 @@ test_terminal_SOURCES =            \
+ 
+ test_terminal_CFLAGS =      \
+     -Werror -Wall -pedantic \
+-    @TERMINAL_INCLUDE@
++    @TERMINAL_INCLUDE@      \
++    @LIBGUAC_INCLUDE@
+ 
+ test_terminal_LDADD =  \
+     @CUNIT_LIBS@       \
+-    @TERMINAL_LTLIB@
++    @TERMINAL_LTLIB@   \
++    @LIBGUAC_LTLIB@
+ 
+ #
+ # Autogenerate test runner
+-- 
+2.54.0
+
+
+From afb5d38afbe5848593c0af0ef1ab2a90cfbed703 Mon Sep 17 00:00:00 2001
+From: Ciro Iriarte <ciro.iriarte@gmail.com>
+Date: Wed, 22 Jul 2026 14:11:36 -0300
+Subject: [PATCH 15/15] Exercise the text-output byte bound in the e2e harness
+
+The flow-control scenarios flooded 60 short lines, which overran the old
+16-blob window but is only ~2 KB and so now sits comfortably inside the
+256 KB byte bound. The "without acks" scenario consequently failed: every
+line was delivered, because nothing had overflowed.
+
+Pads each flood line to 4 KB so 100 lines (~400 KB) genuinely overruns the
+byte bound while the blob count stays well within its own limit, making
+these scenarios test the bound that now governs. Adds the converse case: a
+small unacked burst must survive intact, which is what regressed when the
+window was counted in blobs.
+
+The mock exec endpoint grows an optional per-line padding argument, so the
+volume can be reached without a line count whose per-line delay would
+dominate the runtime. Default is unpadded, as before.
+
+Signed-off-by: Ciro Iriarte <ciro.iriarte@gmail.com>
+---
+ util/manual-tests/text-output-e2e.sh          | 30 ++++++++++++++-----
+ .../manual-tests/text-output-k8s-exec-mock.py | 10 +++++--
+ 2 files changed, 31 insertions(+), 9 deletions(-)
+
+diff --git a/util/manual-tests/text-output-e2e.sh b/util/manual-tests/text-output-e2e.sh
+index 40786754..aca88ed6 100755
+--- a/util/manual-tests/text-output-e2e.sh
++++ b/util/manual-tests/text-output-e2e.sh
+@@ -106,24 +106,40 @@ check $?
+ pkill -f "$MOCK" 2>/dev/null
+ 
+ # =========================== FLOW CONTROL ===========================
+-# Flood 60 lines (well past the server's outstanding-blob threshold). With
+-# acks, everything is delivered; without acks, guacd drops the backlog.
++# guacd bounds the unacknowledged backlog by BYTES (256 KB), not by blob count,
++# so a burst only overflows once its volume exceeds that bound. Each line here
++# is padded to 4 KB so that 100 lines (~400 KB) comfortably overruns it while
++# the blob count stays well inside its own limit -- this exercises the byte
++# bound specifically. With acks, the window keeps draining and everything is
++# delivered; without acks, guacd drops the backlog once it overflows.
+ 
+-hr "FLOW CONTROL: 60-line flood WITH acks -> all lines delivered (line 59 present)"
++FLOOD_LINES=100
++FLOOD_PAD=4096
++
++hr "FLOW CONTROL: ~400KB flood WITH acks -> all lines delivered (line 99 present)"
+ pkill -f "$MOCK" 2>/dev/null; sleep 0.3
+-python3 "$MOCK" "$K8S_PORT" 60 >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$MOCK" "$K8S_PORT" "$FLOOD_LINES" "$FLOOD_PAD" >"$TMP/k8s.log" 2>&1 & sleep 1
++python3 "$DRIVER" kubernetes \
++  "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\"}" \
++  --secs 30 --expect "K8S-TEXT-OUTPUT line 99"
++check $?
++pkill -f "$MOCK" 2>/dev/null
++
++hr "FLOW CONTROL: ~400KB flood WITHOUT acks -> backlog dropped (line 00 present, line 99 absent)"
++pkill -f "$MOCK" 2>/dev/null; sleep 0.3
++python3 "$MOCK" "$K8S_PORT" "$FLOOD_LINES" "$FLOOD_PAD" >"$TMP/k8s.log" 2>&1 & sleep 1
+ python3 "$DRIVER" kubernetes \
+   "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\"}" \
+-  --secs 12 --expect "K8S-TEXT-OUTPUT line 59"
++  --secs 30 --no-ack --expect "K8S-TEXT-OUTPUT line 00" --expect-absent "K8S-TEXT-OUTPUT line 99"
+ check $?
+ pkill -f "$MOCK" 2>/dev/null
+ 
+-hr "FLOW CONTROL: 60-line flood WITHOUT acks -> backlog dropped (line 00 present, line 59 absent)"
++hr "FLOW CONTROL: small unacked burst is NOT dropped (byte bound, not blob count)"
+ pkill -f "$MOCK" 2>/dev/null; sleep 0.3
+ python3 "$MOCK" "$K8S_PORT" 60 >"$TMP/k8s.log" 2>&1 & sleep 1
+ python3 "$DRIVER" kubernetes \
+   "{\"hostname\":\"127.0.0.1\",\"port\":\"$K8S_PORT\",\"use-ssl\":\"false\",\"namespace\":\"default\",\"pod\":\"testpod\",\"exec-command\":\"/bin/sh\",\"text-output\":\"true\"}" \
+-  --secs 12 --no-ack --expect "K8S-TEXT-OUTPUT line 00" --expect-absent "K8S-TEXT-OUTPUT line 59"
++  --secs 15 --no-ack --expect "K8S-TEXT-OUTPUT line 59"
+ check $?
+ pkill -f "$MOCK" 2>/dev/null
+ 
+diff --git a/util/manual-tests/text-output-k8s-exec-mock.py b/util/manual-tests/text-output-k8s-exec-mock.py
+index f5db25b8..e15dfa95 100755
+--- a/util/manual-tests/text-output-k8s-exec-mock.py
++++ b/util/manual-tests/text-output-k8s-exec-mock.py
+@@ -13,7 +13,7 @@ hostname=127.0.0.1 port=8091 namespace=default pod=testpod exec-command=/bin/sh.
+ 
+ Requires the third-party "websockets" Python package.
+ 
+-Usage: text-output-k8s-exec-mock.py [port] [lines]   (defaults: 8091, 20)
++Usage: text-output-k8s-exec-mock.py [port] [lines] [pad]  (defaults: 8091, 20, 0)
+ """
+ import asyncio
+ import sys
+@@ -27,6 +27,11 @@ SUBPROTO = "v4.channel.k8s.io"
+ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8091
+ LINES = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+ 
++# Optional per-line padding, in bytes. Used to push a modest number of lines
++# past guacd's unacknowledged-backlog byte bound without needing a line count
++# so large that the per-line delay dominates the test's runtime.
++PAD = int(sys.argv[3]) if len(sys.argv) > 3 else 0
++
+ 
+ def frame(text):
+     """Wrap text as a Kubernetes exec stdout (channel 1) binary frame."""
+@@ -39,7 +44,8 @@ async def handler(ws, *args):
+     try:
+         await ws.send(frame("\x1b[36mK8S-MOCK-EXEC ready\x1b[0m\r\n"))
+         for i in range(LINES):
+-            await ws.send(frame("\x1b[32mK8S-TEXT-OUTPUT line %02d\x1b[0m\r\n" % i))
++            await ws.send(frame("\x1b[32mK8S-TEXT-OUTPUT line %02d\x1b[0m%s\r\n"
++                                % (i, "P" * PAD)))
+             await asyncio.sleep(0.1)
+     except Exception as exc:  # noqa: BLE001 - report and exit the handler
+         print("[k8s-mock] handler ended: %r" % exc, flush=True)
 -- 
 2.54.0
 
